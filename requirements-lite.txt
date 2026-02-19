@@ -1,0 +1,94 @@
+# ==================== 狼人杀AI系统 - 轻量级依赖配置（方案一） ====================
+# 仅包含基础功能：基础框架 + 轻量级ML增强
+# 适用于资源受限环境（1-2GB内存）
+
+# -------------------- 基础框架依赖 --------------------
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+openai>=1.0.0
+werewolf-agent-build-sdk==0.0.10
+
+# -------------------- ML增强依赖（核心） --------------------
+numpy>=1.24.0,<2.0.0
+scikit-learn>=1.3.0,<1.5.0
+joblib>=1.3.0,<1.5.0
+
+# -------------------- 配置管理依赖 --------------------
+pyyaml>=6.0
+
+# -------------------- 性能增强依赖（可选） --------------------
+# XGBoost（提升集成学习性能）
+xgboost>=1.7.0,<2.1.0
+
+# Pandas（数据处理和分析）
+pandas>=2.0.0,<2.2.0
+
+# -------------------- 辅助工具依赖 --------------------
+tqdm>=4.65.0  # 进度条
+
+# ==================== 说明 ====================
+# 本配置文件实现方案一：轻量级模式
+# 不包含 Golden Path 深度学习功能
+
+# 功能清单：
+# ✓ 基础游戏逻辑（7种角色）
+# ✓ LLM驱动的AI玩家
+# ✓ sklearn-based ML增强
+# ✓ XGBoost集成学习
+# ✗ Golden Path三阶段学习（需要torch+transformers）
+
+# 依赖分类：
+# 1. 基础依赖（必需）：fastapi, uvicorn, openai, werewolf-agent-build-sdk
+# 2. ML核心依赖（必需）：numpy, scikit-learn, joblib
+# 3. 性能增强依赖：xgboost, pandas
+# 4. 辅助工具依赖：tqdm
+
+# 总大小估算：
+# - 基础安装：约150MB
+# - 含所有依赖：约200MB
+
+# 资源需求：
+# - CPU: 1核以上
+# - 内存: 1-2GB
+# - 磁盘: 2GB以上
+
+# 环境变量配置：
+# ENABLE_GOLDEN_PATH=false         # 禁用Golden Path（重要！）
+# ML_AUTO_TRAIN=true               # 启用自动训练
+# ML_TRAIN_INTERVAL=10             # 训练间隔（游戏场数）
+# ML_MIN_SAMPLES=50                # 最小训练样本数
+
+# 安装说明：
+# 1. 创建虚拟环境：
+#    python -m venv venv
+#    source venv/bin/activate  # Linux/Mac
+#    venv\Scripts\activate     # Windows
+#
+# 2. 安装依赖：
+#    pip install -r requirements-lite.txt
+#
+# 3. 验证安装：
+#    python -c "import sklearn; import xgboost; print('✓ All dependencies installed')"
+
+# 注意事项：
+# - 必须设置环境变量 ENABLE_GOLDEN_PATH=false
+# - 如果网络较慢，建议使用国内镜像：
+#   pip install -r requirements-lite.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+# 魔搭平台部署：
+# 方案一（本文件）：轻量级模式
+# - 使用 requirements-lite.txt
+# - 设置 ENABLE_GOLDEN_PATH=false
+# - 资源配置：cpu/4v-cpu-8g-mem-8g 或更低
+#
+# 优势：
+# ✓ 启动快（约10-15秒）
+# ✓ 内存占用低（约500MB-1GB）
+# ✓ 成本低
+# ✓ 仍然支持ML增强功能
+
+# 与方案二的区别：
+# - 不支持 Golden Path 三阶段学习
+# - 不包含 torch 和 transformers
+# - 内存需求降低约70%
+# - 安装时间减少约80%

@@ -10,12 +10,12 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件
-COPY requirements.txt .
+# 复制轻量级依赖文件
+COPY requirements-lite.txt .
 
-# 安装Python依赖
+# 安装Python依赖（轻量级版本，不含torch/transformers）
 # 使用国内镜像加速安装
-RUN pip install --no-cache-dir -r requirements.txt \
+RUN pip install --no-cache-dir -r requirements-lite.txt \
     -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 复制项目文件
@@ -30,6 +30,7 @@ EXPOSE 7860
 # 设置环境变量
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
+ENV ENABLE_GOLDEN_PATH=false
 
 # 复制启动脚本并设置权限
 COPY start.sh .
