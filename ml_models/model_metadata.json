@@ -1,0 +1,9 @@
+{
+  "sklearn_version": "1.4.2",
+  "trained_at": "2026-02-19T23:46:54.620783",
+  "models": [
+    "random_forest",
+    "gradient_boosting",
+    "decision_tree"
+  ]
+}
