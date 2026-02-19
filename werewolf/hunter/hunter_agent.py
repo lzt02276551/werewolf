@@ -324,6 +324,75 @@ class HunterAgent(BasicRoleAgent):
         voting_history[voter].append(target)
         self.memory.set_variable("voting_history", voting_history)
 
+    # ==================== 主要处理方法 ====================
+
+    def perceive(self, req: AgentReq) -> AgentResp:
+        """
+        感知阶段（猎人技能）
+
+        Args:
+            req: Agent请求对象
+
+        Returns:
+            Agent响应对象
+        """
+        status = req.status
+        logger.info(f"[HUNTER PERCEIVE] Status: {status}")
+
+        try:
+            if status == STATUS_SKILL:
+                return self._handle_skill(req)
+
+            return AgentResp(action="", content="")
+
+        except Exception as e:
+            logger.error(f"[PERCEIVE] Error: {e}", exc_info=True)
+            return AgentResp(action="", content="")
+
+    def interact(self, req: AgentReq) -> AgentResp:
+        """
+        交互阶段
+
+        Args:
+            req: Agent请求对象
+
+        Returns:
+            Agent响应对象
+        """
+        status = req.status
+        logger.info(f"[HUNTER INTERACT] Status: {status}")
+
+        try:
+            # 更新游戏状态
+            self.game_state_manager.update_dead_players()
+
+            # 根据状态分发处理
+            handler_map = {
+                STATUS_START: self._handle_start,
+                STATUS_DAY: self._handle_discussion,
+                STATUS_DISCUSS: self._handle_discussion,
+                STATUS_VOTE: self._handle_vote,
+                STATUS_VOTE_RESULT: self._handle_vote_result,
+                STATUS_SHERIFF_ELECTION: self._handle_sheriff_election,
+                STATUS_SHERIFF_SPEECH: self._handle_sheriff_speech,
+                STATUS_SHERIFF_VOTE: self._handle_sheriff_vote,
+                STATUS_SHERIFF_SPEECH_ORDER: self._handle_sheriff_speech_order,
+                STATUS_SHERIFF_PK: self._handle_sheriff_pk,
+                STATUS_RESULT: self._handle_result,
+            }
+
+            handler = handler_map.get(status)
+            if handler:
+                return handler(req)
+            else:
+                logger.warning(f"[INTERACT] Unknown status: {status}")
+                return AgentResp(action="", content="")
+
+        except Exception as e:
+            logger.error(f"[INTERACT] Error in status {status}: {e}", exc_info=True)
+            return AgentResp(action="", content="")
+
+
     
     # ==================== 主要处理方法 ====================
     
