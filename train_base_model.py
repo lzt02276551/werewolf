@@ -27,6 +27,7 @@ except ImportError:
     sys.exit(1)
 
 import numpy as np
+import joblib
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import cross_val_score
@@ -160,22 +161,47 @@ def train_models(X, y):
 
 
 def save_models(models, output_dir='ml_models'):
-    """保存模型"""
+    """保存模型 - 使用 WolfDetectionEnsemble 兼容的格式"""
     os.makedirs(output_dir, exist_ok=True)
     
     output_file = os.path.join(output_dir, 'ensemble.pkl')
     
-    # 保存模型
-    with open(output_file, 'wb') as f:
-        pickle.dump(models, f)
+    # 创建兼容的模型数据结构
+    from sklearn.preprocessing import StandardScaler
     
-    logger.info(f"✓ Models saved to {output_file}")
+    model_data = {
+        'rf_model': models['random_forest'],
+        'gb_model': models['gradient_boosting'],
+        'xgb_model': None,  # 暂时不使用 XGBoost
+        'scaler': StandardScaler(),  # 创建一个默认的 scaler
+        'weights': {
+            'rf': 0.4,
+            'gb': 0.4,
+            'xgb': 0.2
+        },
+        'feature_names': [
+            'trust_score', 'vote_accuracy', 'contradiction_count',
+            'injection_attempts', 'false_quotation_count', 'avg_speech_length',
+            'voting_speed_avg', 'mentions_others_count', 'mentioned_by_others_count',
+            'aggressive_score', 'defensive_score', 'emotion_keyword_count',
+            'logic_keyword_count', 'night_survival_rate', 'alliance_strength',
+            'isolation_score', 'speech_consistency_score', 'avg_response_time'
+        ],
+        'is_trained': True
+    }
+    
+    # 使用 joblib 保存（与 WolfDetectionEnsemble 一致）
+    import joblib
+    joblib.dump(model_data, output_file)
+    
+    logger.info(f"✓ Models saved to {output_file} (WolfDetectionEnsemble format)")
     
     # 保存元数据
     metadata = {
         'sklearn_version': sklearn.__version__,
         'trained_at': datetime.now().isoformat(),
-        'models': list(models.keys())
+        'models': ['rf_model', 'gb_model'],
+        'format': 'WolfDetectionEnsemble'
     }
     
     metadata_file = os.path.join(output_dir, 'model_metadata.json')
