@@ -1,0 +1,111 @@
+# ==================== 狼人杀AI系统 - 完整依赖配置（方案二） ====================
+# 包含所有功能：基础框架 + ML增强 + Golden Path三阶段学习 + 可选增强
+
+# -------------------- 基础框架依赖 --------------------
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+openai>=1.0.0
+werewolf-agent-build-sdk==0.0.10
+
+# -------------------- ML增强依赖（核心） --------------------
+numpy>=1.24.0,<2.0.0
+scikit-learn>=1.3.0,<1.5.0
+joblib>=1.3.0,<1.5.0
+
+# -------------------- Golden Path依赖（深度学习） --------------------
+# 三阶段学习系统必需
+torch>=2.0.0,<2.2.0
+transformers>=4.30.0,<4.40.0
+
+# Tokenizers（transformers依赖）
+tokenizers>=0.13.0
+
+# -------------------- 配置管理依赖 --------------------
+pyyaml>=6.0
+
+# -------------------- 性能增强依赖 --------------------
+# XGBoost（提升集成学习性能）
+xgboost>=1.7.0,<2.1.0
+
+# Pandas（数据处理和分析）
+pandas>=2.0.0,<2.2.0
+
+# -------------------- 深度学习辅助依赖 --------------------
+# 用于模型训练和优化
+tqdm>=4.65.0  # 进度条
+matplotlib>=3.7.0  # 可视化（可选）
+seaborn>=0.12.0  # 统计可视化（可选）
+
+# -------------------- 数据处理依赖 --------------------
+# 用于高级数据处理
+scipy>=1.10.0  # 科学计算
+
+# ==================== 说明 ====================
+# 本配置文件实现方案二：完整Golden Path模式
+# 包含所有功能所需的依赖
+
+# 功能清单：
+# ✓ 基础游戏逻辑（7种角色）
+# ✓ LLM驱动的AI玩家
+# ✓ sklearn-based ML增强
+# ✓ XGBoost集成学习
+# ✓ 三阶段Golden Path学习
+#   - 阶段一：无监督学习（WerewolfLM）
+#   - 阶段二：监督学习（IdentityDetector）
+#   - 阶段三：强化学习（RLAgent）
+# ✓ 累积训练策略
+# ✓ 数据分析和可视化
+
+# 依赖分类：
+# 1. 基础依赖（必需）：fastapi, uvicorn, openai, werewolf-agent-build-sdk
+# 2. ML核心依赖（必需）：numpy, scikit-learn, joblib
+# 3. Golden Path依赖（必需）：torch, transformers
+# 4. 性能增强依赖：xgboost, pandas
+# 5. 辅助工具依赖：tqdm, matplotlib, seaborn, scipy
+
+# 总大小估算：
+# - 基础安装（不含Golden Path）：约150MB
+# - 含Golden Path（torch+transformers）：约1.5GB
+# - 含所有依赖（完整版）：约1.8GB
+
+# 资源需求：
+# - CPU: 2核以上
+# - 内存: 4GB以上
+# - 磁盘: 10GB以上
+
+# 环境变量配置：
+# ENABLE_GOLDEN_PATH=true          # 启用Golden Path（默认）
+# ML_AUTO_TRAIN=true               # 启用自动训练（默认）
+# ML_TRAIN_INTERVAL=30             # 训练间隔（游戏场数）
+# ML_MIN_SAMPLES=1800              # 最小训练样本数
+
+# 安装说明：
+# 1. 创建虚拟环境：
+#    python -m venv venv
+#    source venv/bin/activate  # Linux/Mac
+#    venv\Scripts\activate     # Windows
+#
+# 2. 安装依赖：
+#    pip install -r requirements.txt
+#
+# 3. 验证安装：
+#    python -c "import torch; import transformers; print('✓ All dependencies installed')"
+
+# 注意事项：
+# - PyTorch安装可能需要较长时间（约1-2GB下载）
+# - 如果网络较慢，建议使用国内镜像：
+#   pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+# - 如果遇到CUDA相关问题，PyTorch会自动使用CPU版本
+# - transformers首次使用时会下载BERT模型（约400MB）
+
+# 轻量级替代方案：
+# 如果资源受限，可以使用 requirements-lite.txt（不含Golden Path）
+# 使用方法：pip install -r requirements-lite.txt
+
+# 魔搭平台部署：
+# 方案一（推荐）：使用 requirements-lite.txt + ENABLE_GOLDEN_PATH=false
+# 方案二（本文件）：使用完整依赖 + ENABLE_GOLDEN_PATH=true
+# 
+# 选择建议：
+# - 资源充足（4GB+内存）：使用方案二（本文件）
+# - 资源受限（1-2GB内存）：使用方案一（requirements-lite.txt）

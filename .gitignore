@@ -1,0 +1,42 @@
+# Python 缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.venv
+
+# IDE 配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# ML 模型和数据（可选，根据需要调整）
+# ml_models/*.pkl
+# game_data/*.json
+
+# 测试文件和目录
+test_*.py
+*_test/
+*_test_*/
+test_data/
+
+# 日志文件
+*.log
+
+# 临时文件
+*.tmp
+*.bak
+
+# 环境配置
+.env

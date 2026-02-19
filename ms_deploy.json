@@ -1,0 +1,16 @@
+{
+  "$schema": "https://modelscope.cn/api/v1/studios/deploy_schema.json",
+  "sdk_type": "docker",
+  "resource_configuration": "xgpu/8v-cpu-32g-mem-16g",
+  "port": 7860,
+  "environment_variables": [
+    {"name": "ML_AUTO_TRAIN", "value": "true"},
+    {"name": "ENABLE_GOLDEN_PATH", "value": "true"},
+    {"name": "ML_TRAIN_INTERVAL", "value": "10"},
+    {"name": "ML_MIN_SAMPLES", "value": "50"},
+    {"name": "ML_MODEL_DIR", "value": "./ml_models"},
+    {"name": "DATA_DIR", "value": "./game_data"},
+    {"name": "LOG_LEVEL", "value": "INFO"},
+    {"name": "TORCH_DEVICE", "value": "cpu"}
+  ]
+}

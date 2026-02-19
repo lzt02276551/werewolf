@@ -1,0 +1,501 @@
+{
+  "game_count": 8,
+  "data": [
+    {
+      "game_id": "game_1",
+      "player_name": "No.1",
+      "role": "wolf",
+      "data": {
+        "trust_score": 30,
+        "vote_accuracy": 0.3,
+        "contradiction_count": 5,
+        "injection_attempts": 2,
+        "false_quotation_count": 1,
+        "speech_lengths": [
+          60,
+          70
+        ],
+        "voting_speed_avg": 2.0,
+        "vote_targets": [
+          "No.3"
+        ],
+        "mentions_others_count": 15,
+        "mentioned_by_others_count": 3,
+        "aggressive_score": 0.8,
+        "defensive_score": 0.9,
+        "emotion_keyword_count": 12,
+        "logic_keyword_count": 4,
+        "night_survival_rate": 0.9,
+        "alliance_strength": 0.8,
+        "isolation_score": 0.7,
+        "speech_consistency_score": 0.3,
+        "avg_response_time": 2.0
+      }
+    },
+    {
+      "game_id": "game_1",
+      "player_name": "No.2",
+      "role": "good",
+      "data": {
+        "trust_score": 70,
+        "vote_accuracy": 0.7,
+        "contradiction_count": 0,
+        "injection_attempts": 0,
+        "false_quotation_count": 0,
+        "speech_lengths": [
+          150,
+          160
+        ],
+        "voting_speed_avg": 5.0,
+        "vote_targets": [
+          "No.1"
+        ],
+        "mentions_others_count": 10,
+        "mentioned_by_others_count": 8,
+        "aggressive_score": 0.3,
+        "defensive_score": 0.4,
+        "emotion_keyword_count": 5,
+        "logic_keyword_count": 15,
+        "night_survival_rate": 0.5,
+        "alliance_strength": 0.6,
+        "isolation_score": 0.3,
+        "speech_consistency_score": 0.8,
+        "avg_response_time": 5.0
+      }
+    },
+    {
+      "game_id": "game_2",
+      "player_name": "No.1",
+      "role": "wolf",
+      "data": {
+        "trust_score": 30,
+        "vote_accuracy": 0.3,
+        "contradiction_count": 5,
+        "injection_attempts": 2,
+        "false_quotation_count": 1,
+        "speech_lengths": [
+          60,
+          70
+        ],
+        "voting_speed_avg": 2.0,
+        "vote_targets": [
+          "No.3"
+        ],
+        "mentions_others_count": 15,
+        "mentioned_by_others_count": 3,
+        "aggressive_score": 0.8,
+        "defensive_score": 0.9,
+        "emotion_keyword_count": 12,
+        "logic_keyword_count": 4,
+        "night_survival_rate": 0.9,
+        "alliance_strength": 0.8,
+        "isolation_score": 0.7,
+        "speech_consistency_score": 0.3,
+        "avg_response_time": 2.0
+      }
+    },
+    {
+      "game_id": "game_2",
+      "player_name": "No.2",
+      "role": "good",
+      "data": {
+        "trust_score": 70,
+        "vote_accuracy": 0.7,
+        "contradiction_count": 0,
+        "injection_attempts": 0,
+        "false_quotation_count": 0,
+        "speech_lengths": [
+          150,
+          160
+        ],
+        "voting_speed_avg": 5.0,
+        "vote_targets": [
+          "No.1"
+        ],
+        "mentions_others_count": 10,
+        "mentioned_by_others_count": 8,
+        "aggressive_score": 0.3,
+        "defensive_score": 0.4,
+        "emotion_keyword_count": 5,
+        "logic_keyword_count": 15,
+        "night_survival_rate": 0.5,
+        "alliance_strength": 0.6,
+        "isolation_score": 0.3,
+        "speech_consistency_score": 0.8,
+        "avg_response_time": 5.0
+      }
+    },
+    {
+      "game_id": "game_1",
+      "player_name": "No.1",
+      "role": "wolf",
+      "data": {
+        "trust_score": 30,
+        "vote_accuracy": 0.3,
+        "contradiction_count": 5,
+        "injection_attempts": 2,
+        "false_quotation_count": 1,
+        "speech_lengths": [
+          60,
+          70
+        ],
+        "voting_speed_avg": 2.0,
+        "vote_targets": [
+          "No.3"
+        ],
+        "mentions_others_count": 15,
+        "mentioned_by_others_count": 3,
+        "aggressive_score": 0.8,
+        "defensive_score": 0.9,
+        "emotion_keyword_count": 12,
+        "logic_keyword_count": 4,
+        "night_survival_rate": 0.9,
+        "alliance_strength": 0.8,
+        "isolation_score": 0.7,
+        "speech_consistency_score": 0.3,
+        "avg_response_time": 2.0
+      }
+    },
+    {
+      "game_id": "game_1",
+      "player_name": "No.2",
+      "role": "good",
+      "data": {
+        "trust_score": 70,
+        "vote_accuracy": 0.7,
+        "contradiction_count": 0,
+        "injection_attempts": 0,
+        "false_quotation_count": 0,
+        "speech_lengths": [
+          150,
+          160
+        ],
+        "voting_speed_avg": 5.0,
+        "vote_targets": [
+          "No.1"
+        ],
+        "mentions_others_count": 10,
+        "mentioned_by_others_count": 8,
+        "aggressive_score": 0.3,
+        "defensive_score": 0.4,
+        "emotion_keyword_count": 5,
+        "logic_keyword_count": 15,
+        "night_survival_rate": 0.5,
+        "alliance_strength": 0.6,
+        "isolation_score": 0.3,
+        "speech_consistency_score": 0.8,
+        "avg_response_time": 5.0
+      }
+    },
+    {
+      "game_id": "game_2",
+      "player_name": "No.1",
+      "role": "wolf",
+      "data": {
+        "trust_score": 30,
+        "vote_accuracy": 0.3,
+        "contradiction_count": 5,
+        "injection_attempts": 2,
+        "false_quotation_count": 1,
+        "speech_lengths": [
+          60,
+          70
+        ],
+        "voting_speed_avg": 2.0,
+        "vote_targets": [
+          "No.3"
+        ],
+        "mentions_others_count": 15,
+        "mentioned_by_others_count": 3,
+        "aggressive_score": 0.8,
+        "defensive_score": 0.9,
+        "emotion_keyword_count": 12,
+        "logic_keyword_count": 4,
+        "night_survival_rate": 0.9,
+        "alliance_strength": 0.8,
+        "isolation_score": 0.7,
+        "speech_consistency_score": 0.3,
+        "avg_response_time": 2.0
+      }
+    },
+    {
+      "game_id": "game_2",
+      "player_name": "No.2",
+      "role": "good",
+      "data": {
+        "trust_score": 70,
+        "vote_accuracy": 0.7,
+        "contradiction_count": 0,
+        "injection_attempts": 0,
+        "false_quotation_count": 0,
+        "speech_lengths": [
+          150,
+          160
+        ],
+        "voting_speed_avg": 5.0,
+        "vote_targets": [
+          "No.1"
+        ],
+        "mentions_others_count": 10,
+        "mentioned_by_others_count": 8,
+        "aggressive_score": 0.3,
+        "defensive_score": 0.4,
+        "emotion_keyword_count": 5,
+        "logic_keyword_count": 15,
+        "night_survival_rate": 0.5,
+        "alliance_strength": 0.6,
+        "isolation_score": 0.3,
+        "speech_consistency_score": 0.8,
+        "avg_response_time": 5.0
+      }
+    },
+    {
+      "game_id": "game_1",
+      "player_name": "No.1",
+      "role": "wolf",
+      "data": {
+        "trust_score": 30,
+        "vote_accuracy": 0.3,
+        "contradiction_count": 5,
+        "injection_attempts": 2,
+        "false_quotation_count": 1,
+        "speech_lengths": [
+          60,
+          70
+        ],
+        "voting_speed_avg": 2.0,
+        "vote_targets": [
+          "No.3"
+        ],
+        "mentions_others_count": 15,
+        "mentioned_by_others_count": 3,
+        "aggressive_score": 0.8,
+        "defensive_score": 0.9,
+        "emotion_keyword_count": 12,
+        "logic_keyword_count": 4,
+        "night_survival_rate": 0.9,
+        "alliance_strength": 0.8,
+        "isolation_score": 0.7,
+        "speech_consistency_score": 0.3,
+        "avg_response_time": 2.0
+      }
+    },
+    {
+      "game_id": "game_1",
+      "player_name": "No.2",
+      "role": "good",
+      "data": {
+        "trust_score": 70,
+        "vote_accuracy": 0.7,
+        "contradiction_count": 0,
+        "injection_attempts": 0,
+        "false_quotation_count": 0,
+        "speech_lengths": [
+          150,
+          160
+        ],
+        "voting_speed_avg": 5.0,
+        "vote_targets": [
+          "No.1"
+        ],
+        "mentions_others_count": 10,
+        "mentioned_by_others_count": 8,
+        "aggressive_score": 0.3,
+        "defensive_score": 0.4,
+        "emotion_keyword_count": 5,
+        "logic_keyword_count": 15,
+        "night_survival_rate": 0.5,
+        "alliance_strength": 0.6,
+        "isolation_score": 0.3,
+        "speech_consistency_score": 0.8,
+        "avg_response_time": 5.0
+      }
+    },
+    {
+      "game_id": "game_2",
+      "player_name": "No.1",
+      "role": "wolf",
+      "data": {
+        "trust_score": 30,
+        "vote_accuracy": 0.3,
+        "contradiction_count": 5,
+        "injection_attempts": 2,
+        "false_quotation_count": 1,
+        "speech_lengths": [
+          60,
+          70
+        ],
+        "voting_speed_avg": 2.0,
+        "vote_targets": [
+          "No.3"
+        ],
+        "mentions_others_count": 15,
+        "mentioned_by_others_count": 3,
+        "aggressive_score": 0.8,
+        "defensive_score": 0.9,
+        "emotion_keyword_count": 12,
+        "logic_keyword_count": 4,
+        "night_survival_rate": 0.9,
+        "alliance_strength": 0.8,
+        "isolation_score": 0.7,
+        "speech_consistency_score": 0.3,
+        "avg_response_time": 2.0
+      }
+    },
+    {
+      "game_id": "game_2",
+      "player_name": "No.2",
+      "role": "good",
+      "data": {
+        "trust_score": 70,
+        "vote_accuracy": 0.7,
+        "contradiction_count": 0,
+        "injection_attempts": 0,
+        "false_quotation_count": 0,
+        "speech_lengths": [
+          150,
+          160
+        ],
+        "voting_speed_avg": 5.0,
+        "vote_targets": [
+          "No.1"
+        ],
+        "mentions_others_count": 10,
+        "mentioned_by_others_count": 8,
+        "aggressive_score": 0.3,
+        "defensive_score": 0.4,
+        "emotion_keyword_count": 5,
+        "logic_keyword_count": 15,
+        "night_survival_rate": 0.5,
+        "alliance_strength": 0.6,
+        "isolation_score": 0.3,
+        "speech_consistency_score": 0.8,
+        "avg_response_time": 5.0
+      }
+    },
+    {
+      "game_id": "game_1",
+      "player_name": "No.1",
+      "role": "wolf",
+      "data": {
+        "trust_score": 30,
+        "vote_accuracy": 0.3,
+        "contradiction_count": 5,
+        "injection_attempts": 2,
+        "false_quotation_count": 1,
+        "speech_lengths": [
+          60,
+          70
+        ],
+        "voting_speed_avg": 2.0,
+        "vote_targets": [
+          "No.3"
+        ],
+        "mentions_others_count": 15,
+        "mentioned_by_others_count": 3,
+        "aggressive_score": 0.8,
+        "defensive_score": 0.9,
+        "emotion_keyword_count": 12,
+        "logic_keyword_count": 4,
+        "night_survival_rate": 0.9,
+        "alliance_strength": 0.8,
+        "isolation_score": 0.7,
+        "speech_consistency_score": 0.3,
+        "avg_response_time": 2.0
+      }
+    },
+    {
+      "game_id": "game_1",
+      "player_name": "No.2",
+      "role": "good",
+      "data": {
+        "trust_score": 70,
+        "vote_accuracy": 0.7,
+        "contradiction_count": 0,
+        "injection_attempts": 0,
+        "false_quotation_count": 0,
+        "speech_lengths": [
+          150,
+          160
+        ],
+        "voting_speed_avg": 5.0,
+        "vote_targets": [
+          "No.1"
+        ],
+        "mentions_others_count": 10,
+        "mentioned_by_others_count": 8,
+        "aggressive_score": 0.3,
+        "defensive_score": 0.4,
+        "emotion_keyword_count": 5,
+        "logic_keyword_count": 15,
+        "night_survival_rate": 0.5,
+        "alliance_strength": 0.6,
+        "isolation_score": 0.3,
+        "speech_consistency_score": 0.8,
+        "avg_response_time": 5.0
+      }
+    },
+    {
+      "game_id": "game_2",
+      "player_name": "No.1",
+      "role": "wolf",
+      "data": {
+        "trust_score": 30,
+        "vote_accuracy": 0.3,
+        "contradiction_count": 5,
+        "injection_attempts": 2,
+        "false_quotation_count": 1,
+        "speech_lengths": [
+          60,
+          70
+        ],
+        "voting_speed_avg": 2.0,
+        "vote_targets": [
+          "No.3"
+        ],
+        "mentions_others_count": 15,
+        "mentioned_by_others_count": 3,
+        "aggressive_score": 0.8,
+        "defensive_score": 0.9,
+        "emotion_keyword_count": 12,
+        "logic_keyword_count": 4,
+        "night_survival_rate": 0.9,
+        "alliance_strength": 0.8,
+        "isolation_score": 0.7,
+        "speech_consistency_score": 0.3,
+        "avg_response_time": 2.0
+      }
+    },
+    {
+      "game_id": "game_2",
+      "player_name": "No.2",
+      "role": "good",
+      "data": {
+        "trust_score": 70,
+        "vote_accuracy": 0.7,
+        "contradiction_count": 0,
+        "injection_attempts": 0,
+        "false_quotation_count": 0,
+        "speech_lengths": [
+          150,
+          160
+        ],
+        "voting_speed_avg": 5.0,
+        "vote_targets": [
+          "No.1"
+        ],
+        "mentions_others_count": 10,
+        "mentioned_by_others_count": 8,
+        "aggressive_score": 0.3,
+        "defensive_score": 0.4,
+        "emotion_keyword_count": 5,
+        "logic_keyword_count": 15,
+        "night_survival_rate": 0.5,
+        "alliance_strength": 0.6,
+        "isolation_score": 0.3,
+        "speech_consistency_score": 0.8,
+        "avg_response_time": 5.0
+      }
+    }
+  ]
+}
