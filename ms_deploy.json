@@ -1,7 +1,7 @@
 {
   "$schema": "https://modelscope.cn/api/v1/studios/deploy_schema.json",
   "sdk_type": "docker",
-  "resource_configuration": "cpu/4v-cpu-8g-mem-8g",
+  "resource_configuration": "cpu/2v-cpu-16g-mem-16g",
   "port": 7860,
   "environment_variables": [
     {"name": "ENABLE_GOLDEN_PATH", "value": "false"},
