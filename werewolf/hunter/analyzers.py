@@ -147,6 +147,10 @@ class TrustScoreAnalyzer(BaseAnalyzer):
         self.memory_dao = memory_dao
         self.validator = DataValidator()
     
+    def _get_default_result(self) -> float:
+        """返回默认的狼人概率"""
+        return 0.5
+    
     def _validate_input(self, player_name: str, *args, **kwargs) -> bool:
         return self.validator.validate_player_name(player_name)
     
@@ -246,6 +250,10 @@ class VotingPatternAnalyzer(BaseAnalyzer):
         self.memory_dao = memory_dao
         self.validator = DataValidator()
     
+    def _get_default_result(self) -> float:
+        """返回默认的修正值"""
+        return 0.0
+    
     def _validate_input(self, player_name: str, *args, **kwargs) -> bool:
         return self.validator.validate_player_name(player_name)
     
@@ -340,6 +348,10 @@ class SpeechQualityAnalyzer(BaseAnalyzer):
         super().__init__(config)
         self.memory_dao = memory_dao
         self.validator = DataValidator()
+    
+    def _get_default_result(self) -> float:
+        """返回默认的修正值"""
+        return 0.0
         
         # Pre-compiled regex patterns
         self._logical_keywords = {"because", "therefore", "analyze", "evidence", "suspect", "trust", "vote"}
@@ -413,6 +425,10 @@ class ThreatLevelAnalyzer(BaseAnalyzer):
         super().__init__(config)
         self.memory_dao = memory_dao
         self.cache_manager = cache_manager
+    
+    def _get_default_result(self) -> float:
+        """返回默认的修正值"""
+        return 0.0
         self.validator = DataValidator()
     
     def _validate_input(self, player_name: str, current_day: int = 1, alive_count: int = 12, *args, **kwargs) -> bool:
