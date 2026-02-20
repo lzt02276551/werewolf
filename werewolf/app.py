@@ -2,18 +2,18 @@ import os
 import logging
 
 from agent_build_sdk.builder import AgentBuilder
-from seer.seer_agent import SeerAgent
-from villager.villager_agent import VillagerAgent
-from witch.witch_agent import WitchAgent
-from wolf.wolf_agent import WolfAgent
-from guard.guard_agent import GuardAgent
-from hunter.hunter_agent import HunterAgent
-from wolf_king.wolf_king_agent import WolfKingAgent
+from werewolf.seer.seer_agent import SeerAgent
+from werewolf.villager.villager_agent import VillagerAgent
+from werewolf.witch.witch_agent import WitchAgent
+from werewolf.wolf.wolf_agent import WolfAgent
+from werewolf.guard.guard_agent import GuardAgent
+from werewolf.hunter.hunter_agent import HunterAgent
+from werewolf.wolf_king.wolf_king_agent import WolfKingAgent
 from agent_build_sdk.model.roles import ROLE_VILLAGER, ROLE_WOLF, ROLE_SEER, ROLE_WITCH, ROLE_HUNTER, ROLE_GUARD, ROLE_WOLF_KING
 from agent_build_sdk.sdk.werewolf_agent import WerewolfAgent
 
 # 游戏结束处理器
-from game_end_handler import set_learning_system
+from werewolf.game_end_handler import set_learning_system
 
 # 黄金路径学习系统（向后兼容增量学习）
 try:

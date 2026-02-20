@@ -9,13 +9,20 @@ import logging
 logger = logging.getLogger(__name__)
 
 try:
-    from pgmpy.models import BayesianNetwork
+    from pgmpy.models import DiscreteBayesianNetwork as BayesianNetwork
     from pgmpy.factors.discrete import TabularCPD
     from pgmpy.inference import VariableElimination
     PGMPY_AVAILABLE = True
 except ImportError:
-    logger.warning("pgmpy not available, using simplified Bayesian inference")
-    PGMPY_AVAILABLE = False
+    try:
+        # Fallback to old API
+        from pgmpy.models import BayesianNetwork
+        from pgmpy.factors.discrete import TabularCPD
+        from pgmpy.inference import VariableElimination
+        PGMPY_AVAILABLE = True
+    except ImportError:
+        logger.warning("pgmpy not available, using simplified Bayesian inference")
+        PGMPY_AVAILABLE = False
 
 
 if PGMPY_AVAILABLE:
