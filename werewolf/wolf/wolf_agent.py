@@ -126,6 +126,9 @@ class WolfAgent(BasicRoleAgent):
         # 初始化分析客户端（用于消息分析）
         self._initialize_analysis_client()
         
+        # 初始化检测器管理器
+        self._initialize_detector_manager()
+        
         # 初始化ML增强（可选）
         self._initialize_ml_enhancement()
         
@@ -163,6 +166,28 @@ class WolfAgent(BasicRoleAgent):
                 logger.warning("Detection API not configured, using shared client")
         except Exception as e:
             logger.warning(f"Failed to initialize analysis client: {e}, using shared client")
+    
+    def _initialize_detector_manager(self) -> None:
+        """
+        初始化检测器管理器
+        
+        创建检测器管理器用于注入检测和消息分析
+        """
+        from .detectors import DetectorManager, InjectionDetector
+        
+        try:
+            self.detector_manager = DetectorManager(
+                self.config,
+                self.analysis_client,
+                self.analysis_model_name
+            )
+            self.injection_detector = self.detector_manager.injection_detector
+            logger.info("✓ Detector manager initialized for Wolf")
+        except Exception as e:
+            logger.warning(f"Failed to initialize detector manager: {e}")
+            # 创建基础检测器作为后备
+            self.injection_detector = InjectionDetector(self.config)
+            self.detector_manager = None
     
     def _initialize_memory_variables(self) -> None:
         """
