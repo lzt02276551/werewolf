@@ -1,9 +1,0 @@
-{
-  "sklearn_version": "1.4.2",
-  "trained_at": "2026-02-19T23:50:28.630904",
-  "models": [
-    "rf_model",
-    "gb_model"
-  ],
-  "format": "WolfDetectionEnsemble"
-}

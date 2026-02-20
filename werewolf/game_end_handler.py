@@ -87,10 +87,10 @@ class GameEndHandler:
             self.current_game_id = None
             self.players_stats = {}
             
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error(f"游戏结束处理参数错误: {e}")
         except Exception as e:
-            logger.error(f"Failed to handle game end: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"游戏结束处理失败: {e}", exc_info=True)
     
     def _extract_winner(self, result_message: str) -> str:
         """从结果消息中提取获胜方"""
@@ -138,6 +138,10 @@ class GameEndHandler:
         players_data = []
         
         for player_name, stats in self.players_stats.items():
+            if not isinstance(stats, dict):
+                logger.warning(f"Player {player_name} stats不是字典类型，跳过")
+                continue
+                
             # 判断角色（从stats中获取，如果没有则跳过该玩家）
             role = stats.get('role', 'unknown')
             if role == 'unknown':
@@ -146,34 +150,38 @@ class GameEndHandler:
             
             is_wolf = role in ['wolf', 'wolf_king']
             
-            # 提取19个特征
-            player_data = {
-                "name": player_name,
-                "role": "wolf" if is_wolf else "good",
-                "data": {
-                    "trust_score": stats.get('trust_score', 50),
-                    "vote_accuracy": stats.get('vote_accuracy', 0.5),
-                    "contradiction_count": stats.get('contradiction_count', 0),
-                    "injection_attempts": stats.get('injection_attempts', 0),
-                    "false_quotation_count": stats.get('false_quotation_count', 0),
-                    "speech_lengths": stats.get('speech_lengths', [100]),
-                    "voting_speed_avg": stats.get('voting_speed_avg', 5.0),
-                    "vote_targets": stats.get('vote_targets', []),
-                    "mentions_others_count": stats.get('mentions_others_count', 0),
-                    "mentioned_by_others_count": stats.get('mentioned_by_others_count', 0),
-                    "aggressive_score": stats.get('aggressive_score', 0.5),
-                    "defensive_score": stats.get('defensive_score', 0.5),
-                    "emotion_keyword_count": stats.get('emotion_keyword_count', 0),
-                    "logic_keyword_count": stats.get('logic_keyword_count', 0),
-                    "night_survival_rate": stats.get('night_survival_rate', 0.5),
-                    "alliance_strength": stats.get('alliance_strength', 0.5),
-                    "isolation_score": stats.get('isolation_score', 0.5),
-                    "speech_consistency_score": stats.get('speech_consistency_score', 0.5),
-                    "avg_response_time": stats.get('avg_response_time', 5.0)
+            try:
+                # 提取19个特征
+                player_data = {
+                    "name": player_name,
+                    "role": "wolf" if is_wolf else "good",
+                    "data": {
+                        "trust_score": stats.get('trust_score', 50),
+                        "vote_accuracy": stats.get('vote_accuracy', 0.5),
+                        "contradiction_count": stats.get('contradiction_count', 0),
+                        "injection_attempts": stats.get('injection_attempts', 0),
+                        "false_quotation_count": stats.get('false_quotation_count', 0),
+                        "speech_lengths": stats.get('speech_lengths', [100]),
+                        "voting_speed_avg": stats.get('voting_speed_avg', 5.0),
+                        "vote_targets": stats.get('vote_targets', []),
+                        "mentions_others_count": stats.get('mentions_others_count', 0),
+                        "mentioned_by_others_count": stats.get('mentioned_by_others_count', 0),
+                        "aggressive_score": stats.get('aggressive_score', 0.5),
+                        "defensive_score": stats.get('defensive_score', 0.5),
+                        "emotion_keyword_count": stats.get('emotion_keyword_count', 0),
+                        "logic_keyword_count": stats.get('logic_keyword_count', 0),
+                        "night_survival_rate": stats.get('night_survival_rate', 0.5),
+                        "alliance_strength": stats.get('alliance_strength', 0.5),
+                        "isolation_score": stats.get('isolation_score', 0.5),
+                        "speech_consistency_score": stats.get('speech_consistency_score', 0.5),
+                        "avg_response_time": stats.get('avg_response_time', 5.0)
+                    }
                 }
-            }
-            
-            players_data.append(player_data)
+                
+                players_data.append(player_data)
+            except (ValueError, KeyError, TypeError) as e:
+                logger.error(f"准备玩家数据失败 for {player_name}: {e}")
+                continue
         
         return players_data
 

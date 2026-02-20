@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-平民代理人主文件（重构版）
-应用面向对象设计原则，模块化架构
+平民代理人主文件（重构版 - 继承 BaseGoodAgent）
+使用继承机制减少代码重复，提高可维护性
 """
 
 from .prompt import (
@@ -38,175 +38,84 @@ from agent_build_sdk.model.werewolf_model import (
 )
 from typing import Dict, List, Tuple, Optional, Any
 from agent_build_sdk.utils.logger import logger
-from agent_build_sdk.sdk.role_agent import BasicRoleAgent
 from agent_build_sdk.sdk.agent import format_prompt
 
-# 导入重构后的模块
-from werewolf.common.utils import DataValidator, CacheManager
+# 导入基类
+from werewolf.core.base_good_agent import BaseGoodAgent
+from werewolf.common.utils import DataValidator
 from .config import VillagerConfig
-from .detectors import InjectionDetector, FalseQuoteDetector, MessageParser, SpeechQualityEvaluator
-from .analyzers import (
-    TrustScoreManager, TrustScoreCalculator, VotingPatternAnalyzer,
-    GamePhaseAnalyzer, SpeechPositionAnalyzer
-)
+
+# 导入平民特有的决策器
 from .decision_makers import (
-    VoteDecisionMaker, SheriffElectionDecisionMaker, SheriffVoteDecisionMaker,
     BadgeTransferDecisionMaker, SpeechOrderDecisionMaker, LastWordsGenerator
 )
+from .analyzers import SpeechPositionAnalyzer
 
 # ML Enhancement Integration
 import sys
 import os
-try:
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from ml_agent import LightweightMLAgent
-    ML_AGENT_AVAILABLE = True
-except ImportError as e:
-    ML_AGENT_AVAILABLE = False
-    logger.warning(f"ML agent not available: {e}")
 
 
-class VillagerAgent(BasicRoleAgent):
-    """平民角色代理（重构版）- 模块化架构"""
+class VillagerAgent(BaseGoodAgent):
+    """
+    平民角色代理（重构版 - 继承 BaseGoodAgent）
+    
+    继承 BaseGoodAgent 获得所有共享功能：
+    - ML增强
+    - 检测系统（注入检测、虚假引用检测、消息解析、发言质量评估）
+    - 分析系统（信任分数管理、投票模式分析、游戏阶段分析）
+    - 决策系统（投票决策、警长选举决策、警长投票决策）
+    
+    平民特有功能：
+    - 无特殊技能（纯粹的推理和投票）
+    """
 
     def __init__(self, model_name):
+        """
+        初始化平民代理
+        
+        Args:
+            model_name: LLM模型名称
+        """
+        # 调用父类初始化（会自动初始化所有共享组件）
         super().__init__(ROLE_VILLAGER, model_name=model_name)
         
-        # 配置
+        # 使用平民特有配置覆盖基类配置
         self.config = VillagerConfig()
         
-        # 初始化内存变量
-        self._init_memory_variables()
-        
-        # 初始化检测专用LLM客户端（在ML之前，因为ML不依赖它）
-        self.detection_client = self._init_detection_client()
-        
-        # ML增强
-        self.ml_agent = None
-        self.ml_enabled = False
-        self._init_ml_enhancement()
-        
-        # 初始化所有组件（依赖注入）
-        self._init_components()
+        logger.info("✓ VillagerAgent initialized (inherits from BaseGoodAgent)")
     
-    def _init_memory_variables(self):
-        """初始化内存变量"""
-        self.memory.set_variable("player_data", {})
-        self.memory.set_variable("game_state", {})
-        self.memory.set_variable("seer_checks", {})
-        self.memory.set_variable("voting_results", {})
-        self.memory.set_variable("all_players", [])
-        self.memory.set_variable("alive_players", [])
-        self.memory.set_variable("dead_players", [])
-        self.memory.set_variable("game_data_collected", [])
-        self.memory.set_variable("game_result", None)
-        self.memory.set_variable("giving_last_words", False)
-        self.memory.set_variable("sheriff", None)
-    
-    def _init_ml_enhancement(self):
-        """初始化ML增强系统"""
-        if not ML_AGENT_AVAILABLE:
-            logger.info("ML enhancement disabled - module not available")
-            return
+    def _init_specific_components(self):
+        """
+        初始化平民特有组件
         
+        平民特有的决策器和分析器：
+        - BadgeTransferDecisionMaker: 警长徽章转移决策
+        - SpeechOrderDecisionMaker: 发言顺序决策
+        - LastWordsGenerator: 遗言生成器
+        - SpeechPositionAnalyzer: 发言位置分析器
+        """
         try:
-            model_dir = os.getenv('ML_MODEL_DIR', './ml_models')
-            self.ml_agent = LightweightMLAgent(model_dir=model_dir)
-            self.ml_enabled = self.ml_agent.enabled
+            self.badge_transfer_decision_maker = BadgeTransferDecisionMaker(
+                self.config, self.trust_score_calculator
+            )
+            self.speech_order_decision_maker = SpeechOrderDecisionMaker(
+                self.config, self.trust_score_calculator
+            )
+            self.last_words_generator = LastWordsGenerator(
+                self.config, self.trust_score_calculator, self.voting_pattern_analyzer
+            )
+            self.speech_position_analyzer = SpeechPositionAnalyzer(self.config)
             
-            if self.ml_enabled:
-                logger.info("✓ ML enhancement enabled for Villager")
-                
-                # 初始化增量学习系统
-                try:
-                    from incremental_learning import IncrementalLearningSystem
-                    from game_end_handler import set_learning_system
-                    
-                    retrain_interval = int(os.getenv('ML_RETRAIN_INTERVAL', '5'))
-                    learning_system = IncrementalLearningSystem(self.ml_agent, retrain_interval)
-                    set_learning_system(learning_system)
-                    
-                    logger.info(f"✓ Incremental learning enabled (retrain every {retrain_interval} games)")
-                except Exception as e:
-                    logger.warning(f"⚠ Incremental learning not available: {e}")
-            else:
-                logger.info("⚠ ML enhancement initialized but not enabled")
+            logger.info("✓ Villager-specific components initialized")
         except Exception as e:
-            logger.error(f"✗ Failed to initialize ML enhancement: {e}")
-            self.ml_agent = None
-            self.ml_enabled = False
-    
-    def _init_detection_client(self):
-        """初始化消息检测专用的LLM客户端（DeepSeek Reasoner）"""
-        detection_model = os.getenv('DETECTION_MODEL_NAME')
-        
-        if not detection_model:
-            logger.info("未配置DETECTION_MODEL_NAME，消息检测将使用主模型")
-            if hasattr(self, 'client') and self.client:
-                return self.client
-            else:
-                logger.warning("主模型客户端未初始化，检测器将使用规则模式")
-                return None
-        
-        try:
-            from openai import OpenAI
-            
-            # 优先使用检测专用配置，否则回退到主模型配置
-            api_key = os.getenv('DETECTION_API_KEY') or os.getenv('OPENAI_API_KEY')
-            base_url = os.getenv('DETECTION_BASE_URL') or os.getenv('OPENAI_BASE_URL')
-            
-            if not api_key:
-                logger.warning("未配置DETECTION_API_KEY，消息检测将使用主模型")
-                return getattr(self, 'client', None)
-            
-            # 创建检测专用客户端
-            detection_client = OpenAI(api_key=api_key, base_url=base_url)
-            
-            logger.info(f"✓ 消息检测专用LLM已配置: {detection_model} (DeepSeek Reasoner)")
-            logger.info(f"  - API Base: {base_url}")
-            logger.info(f"  - 用途: 消息注入检测、虚假引用检测、消息解析、发言质量评估")
-            
-            return detection_client
-            
-        except Exception as e:
-            logger.error(f"初始化检测专用LLM失败: {e}，将使用主模型")
-            return getattr(self, 'client', None)
-    
-    def _init_components(self):
-        """初始化所有组件（依赖注入模式）"""
-        # 缓存管理器
-        self.cache_manager = CacheManager()
-        
-        # 检测器
-        self.injection_detector = InjectionDetector(self.config, self.detection_client)
-        self.false_quote_detector = FalseQuoteDetector(self.config, self.detection_client)
-        self.message_parser = MessageParser(self.config, self.detection_client)
-        self.speech_quality_evaluator = SpeechQualityEvaluator(self.config, self.detection_client)
-        
-        # 分析器
-        self.trust_score_manager = TrustScoreManager(self.config)
-        self.trust_score_calculator = TrustScoreCalculator(self.config)
-        self.voting_pattern_analyzer = VotingPatternAnalyzer(self.config)
-        self.game_phase_analyzer = GamePhaseAnalyzer(self.config)
-        self.speech_position_analyzer = SpeechPositionAnalyzer(self.config)
-        
-        # 决策器
-        self.vote_decision_maker = VoteDecisionMaker(
-            self.config, self.trust_score_calculator, self.voting_pattern_analyzer
-        )
-        self.sheriff_election_decision_maker = SheriffElectionDecisionMaker(self.config)
-        self.sheriff_vote_decision_maker = SheriffVoteDecisionMaker(
-            self.config, self.trust_score_calculator
-        )
-        self.badge_transfer_decision_maker = BadgeTransferDecisionMaker(
-            self.config, self.trust_score_calculator
-        )
-        self.speech_order_decision_maker = SpeechOrderDecisionMaker(
-            self.config, self.trust_score_calculator
-        )
-        self.last_words_generator = LastWordsGenerator(
-            self.config, self.trust_score_calculator, self.voting_pattern_analyzer
-        )
+            logger.error(f"✗ Failed to initialize villager-specific components: {e}")
+            # 设置为 None 以支持降级
+            self.badge_transfer_decision_maker = None
+            self.speech_order_decision_maker = None
+            self.last_words_generator = None
+            self.speech_position_analyzer = None
+
 
     # ==================== 辅助方法 ====================
     
@@ -246,7 +155,7 @@ class VillagerAgent(BasicRoleAgent):
             logger.error(f"Failed to collect game data: {e}")
     
     def _infer_player_role(self, player_name: str, result_message: str, context: Dict) -> str:
-        """推断玩家角色"""
+        """推断玩家角色（继承自基类的 _build_context，这里保留用于游戏数据收集）"""
         # 1. 从预言家验证中获取
         seer_checks = context.get("seer_checks", {})
         if player_name in seer_checks:
@@ -263,18 +172,7 @@ class VillagerAgent(BasicRoleAgent):
         
         return "unknown"
     
-    def _build_context(self) -> dict:
-        """构建决策上下文"""
-        return {
-            "player_data": self.memory.load_variable("player_data"),
-            "game_state": self.memory.load_variable("game_state"),
-            "seer_checks": self.memory.load_variable("seer_checks"),
-            "voting_results": self.memory.load_variable("voting_results"),
-            "trust_scores": self.memory.load_variable("trust_scores") if hasattr(self.memory, "trust_scores") else {},
-            "voting_history": self.memory.load_variable("voting_history") if hasattr(self.memory, "voting_history") else {},
-            "speech_history": self.memory.load_variable("speech_history") if hasattr(self.memory, "speech_history") else {},
-            "my_name": self.memory.load_variable("name"),
-        }
+    # _build_context 方法已在 BaseGoodAgent 中实现，这里不需要重复
     
     def _get_alive_players_from_system(self):
         """从系统信息中获取存活玩家列表"""
@@ -435,102 +333,9 @@ class VillagerAgent(BasicRoleAgent):
                     self.memory.set_variable("giving_last_words", True)
                     logger.info("[LAST WORDS] Villager is being eliminated, preparing final words")
                 
-                # 注入攻击检测
-                injection_type, subtype, confidence, penalty = self.injection_detector.detect(req.message, req.name)
+                # 使用基类的消息处理方法（包含注入检测、虚假引用检测、消息解析、发言质量评估）
+                self._process_player_message(req.message, req.name)
                 
-                # 检查是否是他人的遗言阶段
-                is_others_last_words = False
-                if injection_type not in ["MALICIOUS", "POTENTIAL_FALSE_QUOTE"]:
-                    is_others_last_words = (
-                        "leaves their last words" in req.message.lower() or
-                        "last words:" in req.message.lower() or
-                        "'s last words" in req.message.lower() or
-                        "遗言：" in req.message or
-                        "的遗言" in req.message
-                    )
-                    
-                    if is_others_last_words:
-                        logger.info(f"[LAST WORDS PHASE] {req.name} is giving their last words (legitimate game phase)")
-                        injection_type, subtype, confidence, penalty = ("CLEAN", "LAST_WORDS", 1.0, 0)
-
-                player_data = self.memory.load_variable("player_data")
-                if req.name not in player_data:
-                    player_data[req.name] = {}
-
-                if injection_type == "MALICIOUS":
-                    player_data[req.name]["malicious_injection"] = True
-                    player_data[req.name]["injection_subtype"] = subtype
-                    player_data[req.name]["injection_confidence"] = confidence
-                    player_data[req.name]["trust_penalty"] = penalty
-                    logger.info(f"[INJECTION DETECTED] {req.name}: {subtype} (confidence: {confidence:.2f}, penalty: {penalty})")
-                    
-                elif injection_type == "BENIGN":
-                    player_data[req.name]["benign_injection"] = True
-                    player_data[req.name]["analytical_behavior"] = True
-                    logger.info(f"[BENIGN BEHAVIOR] {req.name}: {subtype} (confidence: {confidence:.2f}, bonus: {penalty})")
-                
-                elif injection_type == "POTENTIAL_FALSE_QUOTE":
-                    # 验证虚假引用
-                    history = self.memory.load_history()
-                    is_false, false_confidence, details = self.false_quote_detector.detect(
-                        req.name, req.message, history
-                    )
-                    if is_false and false_confidence > 0.6:
-                        player_data[req.name]["false_quotes"] = True
-                        player_data[req.name]["false_quote_details"] = details
-                        player_data[req.name]["trust_penalty"] = player_data[req.name].get("trust_penalty", 0) - 20
-                        logger.info(f"[FALSE QUOTE DETECTED] {req.name}: {details}")
-
-                # 解析消息
-                parsed_info = self.message_parser.detect(req.message, req.name)
-                
-                # 处理角色声称
-                if parsed_info.get("claimed_role"):
-                    player_data[req.name]["claimed_role"] = parsed_info["claimed_role"]
-                    logger.info(f"{req.name} claimed role: {parsed_info['claimed_role']}")
-                
-                # 处理预言家验证信息
-                if parsed_info.get("seer_check"):
-                    seer_check = parsed_info["seer_check"]
-                    checked_player = seer_check.get("player")
-                    result = seer_check.get("result")
-                    if checked_player and result:
-                        seer_checks = self.memory.load_variable("seer_checks")
-                        seer_checks[checked_player] = result
-                        self.memory.set_variable("seer_checks", seer_checks)
-                        logger.info(f"Seer check recorded: {checked_player} = {result}")
-                
-                # 处理支持/怀疑关系
-                for supported_player in parsed_info.get("support_players", []):
-                    if supported_player not in player_data:
-                        player_data[supported_player] = {}
-                    if "supported_by" not in player_data[supported_player]:
-                        player_data[supported_player]["supported_by"] = []
-                    if req.name not in player_data[supported_player]["supported_by"]:
-                        player_data[supported_player]["supported_by"].append(req.name)
-                
-                for suspected_player in parsed_info.get("suspect_players", []):
-                    if suspected_player not in player_data:
-                        player_data[suspected_player] = {}
-                    if "suspected_by" not in player_data[suspected_player]:
-                        player_data[suspected_player]["suspected_by"] = []
-                    if req.name not in player_data[suspected_player]["suspected_by"]:
-                        player_data[suspected_player]["suspected_by"].append(req.name)
-                
-                # 处理投票意向
-                if parsed_info.get("vote_intention"):
-                    player_data[req.name]["vote_intention"] = parsed_info["vote_intention"]
-                    logger.info(f"{req.name} vote intention: {parsed_info['vote_intention']}")
-                
-                # 评估发言质量
-                quality = self.speech_quality_evaluator.detect(req.message, {})
-                player_data[req.name]["speech_quality"] = quality
-                if quality >= 60:
-                    player_data[req.name]["logical_speech"] = True
-                elif quality < 30:
-                    player_data[req.name]["short_speech"] = True
-
-                self.memory.set_variable("player_data", player_data)
                 self.memory.append_history(req.name + ": " + req.message)
             else:
                 self.memory.append_history(
@@ -881,55 +686,18 @@ class VillagerAgent(BasicRoleAgent):
             ]
             self.memory.set_variable("choices", choices)
 
-            # 使用决策树决定投票目标
-            my_name = self.memory.load_variable("name")
-            target, reason, vote_scores = self.vote_decision_maker.decide(choices, my_name, context)
-            
-            # 记录决策树结果
-            logger.info(f"[DECISION TREE VOTE] Target: {target}, Reason: {reason}")
-            for player, score in sorted(vote_scores.items(), key=lambda x: x[1], reverse=True):
-                logger.info(f"  {player}: {score:.1f}")
-            
-            # ML增强：融合ML预测
-            if self.ml_enabled and self.ml_agent:
-                ml_scores = {}
-                for candidate in choices:
-                    from game_utils import MLDataBuilder
-                    player_ml_data = MLDataBuilder.build_player_data_for_ml(candidate, context)
-                    wolf_prob = self.ml_agent.predict_wolf_probability(player_ml_data)
-                    ml_scores[candidate] = wolf_prob * 100  # 转换为0-100分数
-                
-                # 融合决策树和ML分数
-                fusion_ratio = float(os.getenv('ML_FUSION_RATIO', '0.4'))  # ML权重40%
-                final_scores = {}
-                for candidate in choices:
-                    dt_score = vote_scores.get(candidate, 0)
-                    ml_score = ml_scores.get(candidate, 50)
-                    final_scores[candidate] = dt_score * (1 - fusion_ratio) + ml_score * fusion_ratio
-                
-                # 选择最高分
-                if final_scores:
-                    ml_target = max(final_scores.items(), key=lambda x: x[1])[0]
-                    logger.info(f"[ML FUSION] ML target: {ml_target}, Fusion scores: {final_scores}")
-                    
-                    # 如果ML和决策树差异较大，记录警告
-                    if ml_target != target:
-                        logger.info(f"[ML FUSION] ML suggests {ml_target} (prob={ml_scores[ml_target]:.2f}), "
-                                  f"DT suggests {target} (score={vote_scores[target]:.1f})")
-                    
-                    # 使用融合后的目标
-                    target = ml_target
+            # 使用基类的投票决策方法（包含决策树和ML融合）
+            target = self._make_vote_decision(choices)
             
             # 混合模式：使用LLM验证或调整
             if self.config.DECISION_MODE == "hybrid":
                 # 添加决策树推荐
-                dt_hint = f"\n[DECISION TREE RECOMMENDATION: Vote {target} - {reason}]"
-                dt_hint += f"\n[Vote Scores: {', '.join([f'{p}:{s:.0f}' for p, s in sorted(vote_scores.items(), key=lambda x: x[1], reverse=True)[:3]])}]"
+                dt_hint = f"\n[DECISION TREE RECOMMENDATION: Vote {target}]"
 
                 prompt = format_prompt(
                     VOTE_PROMPT,
                     {
-                        "name": my_name,
+                        "name": self.memory.load_variable("name"),
                         "choices": choices,
                         "history": "\n".join(self.memory.load_history()) + dt_hint,
                     },
@@ -938,9 +706,7 @@ class VillagerAgent(BasicRoleAgent):
                 result = self.llm_caller(prompt)
                 
                 # 验证LLM输出
-                if result not in choices:
-                    logger.warning(f"LLM output '{result}' not in choices, using decision tree result: {target}")
-                    result = target
+                result = self._validate_player_name(result, choices)
             else:
                 # 纯代码模式
                 result = target

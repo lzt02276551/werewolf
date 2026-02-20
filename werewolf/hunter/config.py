@@ -6,11 +6,11 @@ Hunter (猎人) 配置
 
 from dataclasses import dataclass
 from typing import Dict, Any
-from werewolf.core.config import BaseConfig
+from werewolf.core.base_good_config import BaseGoodConfig
 
 
 @dataclass
-class HunterConfig(BaseConfig):
+class HunterConfig(BaseGoodConfig):
     """
     猎人配置类
     

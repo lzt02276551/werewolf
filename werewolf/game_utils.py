@@ -56,6 +56,10 @@ class GameEndTrigger:
                 for old_game in old_games:
                     GameEndTrigger._triggered_games.discard(old_game)
             
+        except ImportError as e:
+            logger.debug(f"[{role_name}] 无法导入game_end_handler: {e}")
+        except AttributeError as e:
+            logger.debug(f"[{role_name}] 属性访问错误: {e}")
         except Exception as e:
             logger.debug(f"[{role_name}] Incremental learning not triggered: {e}")
 
@@ -107,6 +111,10 @@ class GameStartHandler:
                 for old_game in old_games:
                     GameStartHandler._started_games.discard(old_game)
             
+        except ImportError as e:
+            logger.debug(f"[{role_name}] 无法导入game_end_handler: {e}")
+        except AttributeError as e:
+            logger.debug(f"[{role_name}] 属性访问错误: {e}")
         except Exception as e:
             logger.debug(f"[{role_name}] Game start handler failed: {e}")
 
@@ -155,38 +163,26 @@ class MLDataBuilder:
         voting_results = context.get('voting_results', {})
         player_data = context.get('player_data', {}).get(player_name, {})
         
-        # 计算投票准确度
+        # 计算投票准确度（优化版 - 避免嵌套循环）
         vote_accuracy = 0.5
-        # 遍历所有天数的投票结果，统计该玩家的投票准确度
         player_votes = voting_history.get(player_name, [])
-        if player_votes and isinstance(player_votes, list):
-            correct_votes = 0
-            total_votes = len(player_votes)
+        
+        if player_votes and isinstance(player_votes, list) and len(player_votes) > 0:
+            # 构建被淘汰狼人的集合（一次遍历）
+            eliminated_wolves = set()
+            for day_result in voting_results.values():
+                if isinstance(day_result, dict):
+                    # 投票淘汰的狼人
+                    if day_result.get('voted_out') and day_result.get('was_wolf', False):
+                        eliminated_wolves.add(day_result['voted_out'])
+                    # 被击杀的狼人
+                    if day_result.get('shot_player') and day_result.get('shot_was_wolf', False):
+                        eliminated_wolves.add(day_result['shot_player'])
             
-            # 遍历该玩家的每次投票
-            for vote_target in player_votes:
-                # 检查这个投票目标是否在某天被淘汰或被击杀
-                for day, day_result in voting_results.items():
-                    if isinstance(day_result, dict):
-                        # 检查投票淘汰
-                        if 'voted_out' in day_result:
-                            voted_out = day_result['voted_out']
-                            was_wolf = day_result.get('was_wolf', False)
-                            # 如果玩家投票给了这个被淘汰的人，且此人是狼人，则算正确
-                            if vote_target == voted_out and was_wolf:
-                                correct_votes += 1
-                                break
-                        
-                        # 检查猎人/狼王击杀（如果有记录）
-                        if 'shot_player' in day_result:
-                            shot_player = day_result['shot_player']
-                            shot_was_wolf = day_result.get('shot_was_wolf', False)
-                            if vote_target == shot_player and shot_was_wolf:
-                                correct_votes += 1
-                                break
-            
-            if total_votes > 0:
-                vote_accuracy = correct_votes / total_votes
+            # 统计正确投票数（一次遍历）
+            correct_votes = sum(1 for vote_target in player_votes if vote_target in eliminated_wolves)
+            # 防止除零
+            vote_accuracy = correct_votes / len(player_votes) if len(player_votes) > 0 else 0.5
         
         # 获取发言长度列表
         speeches = speech_history.get(player_name, [])

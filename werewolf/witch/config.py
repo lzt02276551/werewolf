@@ -6,54 +6,45 @@
 """
 
 from dataclasses import dataclass
-from werewolf.core.config import BaseConfig
+from werewolf.core.base_good_config import BaseGoodConfig
 
 
 @dataclass
-class WitchConfig(BaseConfig):
-    """女巫代理人配置"""
+class WitchConfig(BaseGoodConfig):
+    """
+    女巫代理人配置（继承BaseGoodConfig）
     
-    # ==================== 发言长度控制 ====================
-    MAX_SPEECH_LENGTH = 1500
-    MIN_SPEECH_LENGTH = 1000
-    
-    # ==================== 信任分数阈值 ====================
-    TRUST_VERY_LOW = 20
-    TRUST_LOW = 40
-    TRUST_MEDIUM = 60
-    TRUST_HIGH = 70
-    TRUST_VERY_HIGH = 80
-    
-    # ==================== 狼人概率阈值 ====================
-    WOLF_PROB_VERY_HIGH = 0.90
-    WOLF_PROB_HIGH = 0.75
-    WOLF_PROB_MEDIUM = 0.60
+    继承所有共享配置，只定义女巫特有配置：
+    - 解药使用策略
+    - 毒药使用策略
+    - 角色价值评分
+    """
     
     # ==================== 解药使用阈值 ====================
-    ANTIDOTE_SCORE_THRESHOLD = 50  # 解药使用最低分数
-    ANTIDOTE_FIRST_NIGHT_ALWAYS = True  # 首夜必救
+    ANTIDOTE_SCORE_THRESHOLD: int = 50  # 解药使用最低分数
+    ANTIDOTE_FIRST_NIGHT_ALWAYS: bool = True  # 首夜必救
     
     # ==================== 毒药使用阈值 ====================
-    POISON_SCORE_THRESHOLD = 70  # 毒药使用最低分数
+    POISON_SCORE_THRESHOLD: int = 70  # 毒药使用最低分数
     
     # ==================== 角色价值评分 ====================
-    ROLE_VALUE_SEER = 100
-    ROLE_VALUE_GUARD = 85
-    ROLE_VALUE_STRONG_VILLAGER = 70
-    ROLE_VALUE_HUNTER = 55
-    ROLE_VALUE_VILLAGER = 40
-    ROLE_VALUE_WOLF = 0
+    ROLE_VALUE_SEER: int = 100
+    ROLE_VALUE_GUARD: int = 85
+    ROLE_VALUE_STRONG_VILLAGER: int = 70
+    ROLE_VALUE_HUNTER: int = 55
+    ROLE_VALUE_VILLAGER: int = 40
+    ROLE_VALUE_WOLF: int = 0
     
     # ==================== 威胁等级评分 ====================
-    THREAT_SHERIFF = 20
-    THREAT_HIGH_SPEECH = 15
-    THREAT_LEADS_DISCUSSION = 10
-    THREAT_LOGICAL = 10
+    THREAT_SHERIFF: int = 20
+    THREAT_HIGH_SPEECH: int = 15
+    THREAT_LEADS_DISCUSSION: int = 10
+    THREAT_LOGICAL: int = 10
     
     # ==================== 首夜策略 ====================
-    FIRST_NIGHT_STRATEGY_ALWAYS_SAVE = "always_save"
-    FIRST_NIGHT_STRATEGY_OBSERVE = "observe_first"
-    DEFAULT_FIRST_NIGHT_STRATEGY = FIRST_NIGHT_STRATEGY_ALWAYS_SAVE
+    FIRST_NIGHT_STRATEGY_ALWAYS_SAVE: str = "always_save"
+    FIRST_NIGHT_STRATEGY_OBSERVE: str = "observe_first"
+    DEFAULT_FIRST_NIGHT_STRATEGY: str = "always_save"
     
     def validate(self) -> bool:
         """

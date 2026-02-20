@@ -1,14 +1,12 @@
-# Git相关
-.git
-.gitignore
-.gitattributes
-
-# Python缓存
-__pycache__
+# Python
+__pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+*.egg-info/
+dist/
+build/
 
 # 虚拟环境
 venv/
@@ -20,23 +18,41 @@ ENV/
 .idea/
 *.swp
 *.swo
+.kiro/
 
-# 文档
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# 测试和开发文件
+test_*.py
+*_test.py
+check_*.py
+generate_*.py
+game_data_collector.py
+
+# 文档和报告
 *.md
 !README.md
 
-# 测试
-tests/
-*.test.py
-
-# 本地配置
+# 配置文件
 .env
-.env.local
+.env.example
 
-# 日志
-*.log
+# 不需要的依赖文件
+requirements.txt
 
-# 临时文件
-*.tmp
-*.bak
-.DS_Store
+# ML训练相关（部署时不需要）
+ml_golden_path/
+golden_path_integration.py
+incremental_learning.py
+
+# 已有的模型和数据（部署时会重新生成）
+ml_models/
+game_data/
+
+# 部署配置（会单独复制）
+ms_deploy.json
+Dockerfile
+.dockerignore

@@ -44,8 +44,18 @@ class IncrementalLearningSystem:
                     self.collected_data = saved_data.get('data', [])
                     self.game_count = saved_data.get('game_count', 0)
                 logger.info(f"✓ Loaded {len(self.collected_data)} samples from {self.game_count} games")
+            except json.JSONDecodeError as e:
+                logger.warning(f"JSON解析失败: {e}, 将创建新数据文件")
+                self.collected_data = []
+                self.game_count = 0
+            except (IOError, OSError) as e:
+                logger.warning(f"文件读取失败: {e}")
+                self.collected_data = []
+                self.game_count = 0
             except Exception as e:
-                logger.warning(f"Failed to load existing data: {e}")
+                logger.warning(f"加载数据失败: {e}", exc_info=True)
+                self.collected_data = []
+                self.game_count = 0
     
     def _save_data(self):
         """保存收集的数据"""
@@ -57,8 +67,12 @@ class IncrementalLearningSystem:
                     'data': self.collected_data
                 }, f, ensure_ascii=False, indent=2)
             logger.debug(f"Data saved to {data_file}")
+        except (IOError, OSError) as e:
+            logger.error(f"文件写入失败: {e}")
+        except TypeError as e:
+            logger.error(f"数据序列化失败: {e}")
         except Exception as e:
-            logger.error(f"Failed to save data: {e}")
+            logger.error(f"保存数据失败: {e}", exc_info=True)
     
     def on_game_end(self, game_id: str, players_data: List[Dict]) -> Dict:
         """
@@ -120,11 +134,23 @@ class IncrementalLearningSystem:
             sample_weights = []
             
             for item in self.collected_data:
+                if not isinstance(item, dict):
+                    logger.warning(f"跳过无效数据项: {item}")
+                    continue
+                    
+                if 'data' not in item or 'role' not in item:
+                    logger.warning(f"跳过缺少必要字段的数据项: {item}")
+                    continue
+                    
                 player_data_list.append(item['data'])
                 # 标签：0=好人，1=狼人
                 labels.append(1 if item['role'] == 'wolf' else 0)
                 # 样本权重：最近的游戏权重更高
                 sample_weights.append(1.0)
+            
+            if not player_data_list:
+                logger.warning("没有有效的训练数据")
+                return False
             
             # 应用时间衰减权重（最近的游戏权重更高）
             total_samples = len(sample_weights)
@@ -149,8 +175,9 @@ class IncrementalLearningSystem:
             logger.info(f"✓ Model retrained with {len(player_data_list)} samples")
             return True
             
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error(f"✗ 训练数据准备失败: {e}")
+            return False
         except Exception as e:
-            logger.error(f"✗ Model retraining failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"✗ Model retraining failed: {e}", exc_info=True)
             return False
