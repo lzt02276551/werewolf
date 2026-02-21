@@ -5,9 +5,11 @@
 
 import json
 import logging
+import platform
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,11 @@ class FileUtils:
             return default
         
         try:
+            # 检查文件是否为空
+            if filepath.stat().st_size == 0:
+                logger.warning(f"File {filepath} is empty")
+                return default
+            
             with open(filepath, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except (json.JSONDecodeError, IOError) as e:
@@ -40,7 +47,7 @@ class FileUtils:
     @staticmethod
     def write_json(filepath: Path, data: Any, indent: int = 2) -> bool:
         """
-        安全写入JSON文件
+        安全写入JSON文件（原子操作，Windows兼容）
         
         Args:
             filepath: 文件路径
@@ -50,13 +57,30 @@ class FileUtils:
         Returns:
             是否成功
         """
+        temp_file = None
         try:
             filepath.parent.mkdir(parents=True, exist_ok=True)
-            with open(filepath, 'w', encoding='utf-8') as f:
+            
+            # 使用临时文件实现原子写入
+            temp_file = filepath.with_suffix('.tmp')
+            
+            with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=indent)
+            
+            # Windows兼容的原子替换
+            if platform.system() == 'Windows':
+                if filepath.exists():
+                    filepath.unlink()  # Windows需要先删除
+            temp_file.replace(filepath)
             return True
-        except IOError as e:
+        except (IOError, OSError) as e:
             logger.error(f"Failed to write {filepath}: {e}")
+            # 清理临时文件
+            if temp_file and temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except OSError as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
             return False
     
     @staticmethod
@@ -84,7 +108,7 @@ class FileUtils:
     @staticmethod
     def write_text(filepath: Path, text: str) -> bool:
         """
-        安全写入文本文件
+        安全写入文本文件（原子操作，Windows兼容）
         
         Args:
             filepath: 文件路径
@@ -93,13 +117,30 @@ class FileUtils:
         Returns:
             是否成功
         """
+        temp_file = None
         try:
             filepath.parent.mkdir(parents=True, exist_ok=True)
-            with open(filepath, 'w', encoding='utf-8') as f:
+            
+            # 使用临时文件实现原子写入
+            temp_file = filepath.with_suffix('.tmp')
+            
+            with open(temp_file, 'w', encoding='utf-8') as f:
                 f.write(text)
+            
+            # Windows兼容的原子替换
+            if platform.system() == 'Windows':
+                if filepath.exists():
+                    filepath.unlink()  # Windows需要先删除
+            temp_file.replace(filepath)
             return True
-        except IOError as e:
+        except (IOError, OSError) as e:
             logger.error(f"Failed to write {filepath}: {e}")
+            # 清理临时文件
+            if temp_file and temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except OSError as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
             return False
 
 
@@ -107,12 +148,13 @@ class DataValidator:
     """数据验证工具类"""
     
     @staticmethod
-    def validate_player_data(player_data: Any) -> bool:
+    def validate_player_data(player_data: Any, strict: bool = False) -> bool:
         """
         验证玩家数据格式
         
         Args:
             player_data: 玩家数据
+            strict: 是否启用严格模式（验证可选字段）
         
         Returns:
             是否有效
@@ -128,6 +170,27 @@ class DataValidator:
         for field in required_fields:
             if field not in player_data:
                 return False
+            # 验证字段值不为空
+            if not player_data[field]:
+                return False
+        
+        # 验证name是字符串
+        if not isinstance(player_data['name'], str):
+            return False
+        
+        # 验证role是有效角色
+        if not DataValidator.validate_role(player_data['role']):
+            return False
+        
+        # 严格模式：验证可选字段
+        if strict:
+            if 'status' in player_data:
+                if player_data['status'] not in ['alive', 'dead']:
+                    return False
+            
+            if 'votes' in player_data:
+                if not isinstance(player_data['votes'], (int, list)):
+                    return False
         
         return True
     
@@ -170,20 +233,29 @@ class StatisticsCalculator:
     """统计计算工具类"""
     
     @staticmethod
-    def calculate_win_rate(wins: int, total: int) -> float:
+    def calculate_win_rate(wins: int, total: int, precision: int = 4) -> float:
         """
-        计算胜率
+        计算胜率（带精度控制）
         
         Args:
             wins: 胜利次数
             total: 总次数
+            precision: 小数精度（默认4位）
         
         Returns:
             胜率（0-1）
         """
-        if total == 0:
+        if total <= 0:
             return 0.0
-        return wins / total
+        if wins < 0:
+            return 0.0
+        if wins > total:
+            logger.warning(f"Wins ({wins}) > Total ({total}), capping at 1.0")
+            return 1.0
+        
+        # 使用Decimal避免浮点精度问题
+        rate = Decimal(wins) / Decimal(total)
+        return float(rate.quantize(Decimal(10) ** -precision, rounding=ROUND_HALF_UP))
     
     @staticmethod
     def calculate_distribution(items: List[Any]) -> Dict[Any, int]:
@@ -202,20 +274,29 @@ class StatisticsCalculator:
         return distribution
     
     @staticmethod
-    def calculate_percentage(part: int, total: int) -> float:
+    def calculate_percentage(part: int, total: int, precision: int = 2) -> float:
         """
-        计算百分比
+        计算百分比（带精度控制）
         
         Args:
             part: 部分
             total: 总数
+            precision: 小数精度（默认2位）
         
         Returns:
             百分比（0-100）
         """
-        if total == 0:
+        if total <= 0:
             return 0.0
-        return (part / total) * 100
+        if part < 0:
+            return 0.0
+        if part > total:
+            logger.warning(f"Part ({part}) > Total ({total}), capping at 100.0")
+            return 100.0
+        
+        # 使用Decimal避免浮点精度问题
+        percentage = (Decimal(part) / Decimal(total)) * 100
+        return float(percentage.quantize(Decimal(10) ** -precision, rounding=ROUND_HALF_UP))
 
 
 class TimestampUtils:
@@ -237,14 +318,23 @@ class TimestampUtils:
         解析时间戳
         
         Args:
-            timestamp_str: 时间戳字符串
+            timestamp_str: 时间戳字符串（ISO格式）
         
         Returns:
-            datetime对象或None
+            datetime对象，解析失败返回None
+            
+        Warning:
+            调用者必须检查返回值是否为None
+            
+        Example:
+            >>> dt = TimestampUtils.parse_timestamp("2024-01-01T12:00:00")
+            >>> if dt is not None:
+            ...     print(dt.year)
         """
         try:
             return datetime.fromisoformat(timestamp_str)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to parse timestamp '{timestamp_str}': {e}")
             return None
 
 

@@ -7,6 +7,14 @@ import os
 from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
 
+# 导入优化组件
+from werewolf.optimization.utils.safe_math import safe_divide
+from werewolf.optimization.algorithms.bayesian_inference import (
+    BayesianInference as NewBayesianInference,
+    Evidence,
+    EvidenceType
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -312,13 +320,16 @@ class EnhancedDecisionEngine:
             
             # ========== F. 投票与站队（4维）==========
             
-            # F1. 投票目标分析
+            # F1. 投票目标分析（使用safe_divide防止除零）
             vote_targets = voting_history.get(candidate, [])
             voted_good_players = sum(1 for t in vote_targets if context.get('player_data', {}).get(t, {}).get('is_good', False))
             if len(vote_targets) > 0:
-                good_vote_rate = voted_good_players / max(1, len(vote_targets))  # 防止除零
+                good_vote_rate = safe_divide(voted_good_players, len(vote_targets), default=0.0)
                 if good_vote_rate > 0.7:
                     score += 45  # 经常投好人
+            else:
+                # 没有投票记录，不加分也不减分
+                pass
             
             # F2. 关键投票表现
             key_vote_mistakes = data.get('key_vote_mistakes', 0)
@@ -517,11 +528,14 @@ class EnhancedDecisionEngine:
             # 证据充分，增加决策树权重
             base_ratio *= 0.7
         
-        # 3. 分数差异调整
-        score_diff = abs(dt_score - ml_score)
-        if score_diff > 40:
-            # 分数差异大，降低融合（避免过度平滑）
-            base_ratio *= 0.8
+        # 3. 分数差异调整（防止异常值）
+        try:
+            score_diff = abs(float(dt_score) - float(ml_score))
+            if score_diff > 40:
+                # 分数差异大，降低融合（避免过度平滑）
+                base_ratio *= 0.8
+        except (ValueError, TypeError) as e:
+            logger.warning(f"分数差异计算失败: {e}")
         
         # 限制范围
         return max(0.2, min(0.9, base_ratio))
@@ -545,20 +559,28 @@ class EnhancedDecisionEngine:
         try:
             scores_list = sorted(all_scores.values(), reverse=True)
             
-            # 1. 绝对分数（归一化到0-1）
-            abs_confidence = min(1.0, max(0.0, target_score / 100))
+            # 防止空列表
+            if not scores_list:
+                return 0.0
+            
+            # 1. 绝对分数（归一化到0-1，使用safe_divide）
+            abs_confidence = min(1.0, max(0.0, safe_divide(target_score, 100, default=0.0)))
             
             # 2. 相对差距
             if len(scores_list) > 1:
                 gap = scores_list[0] - scores_list[1]
-                gap_confidence = min(1.0, max(0.0, gap / 50))
+                gap_confidence = min(1.0, max(0.0, safe_divide(gap, 50, default=0.0)))
             else:
                 gap_confidence = 1.0
             
             # 3. 分数分布（标准差）
             if len(scores_list) > 1:
-                std = np.std(scores_list)
-                dist_confidence = min(1.0, max(0.0, std / 30))
+                try:
+                    std = np.std(scores_list)
+                    dist_confidence = min(1.0, max(0.0, safe_divide(std, 30, default=0.0)))
+                except (ValueError, TypeError, ZeroDivisionError) as e:
+                    logger.warning(f"标准差计算失败: {e}")
+                    dist_confidence = 0.5
             else:
                 dist_confidence = 0.5
             
@@ -570,7 +592,7 @@ class EnhancedDecisionEngine:
             )
             
             return max(0.0, min(1.0, confidence))
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError, ZeroDivisionError) as e:
             logger.error(f"置信度计算失败: {e}")
             return 0.5
         except Exception as e:
@@ -579,10 +601,17 @@ class EnhancedDecisionEngine:
 
 
 class BayesianInferenceEngine:
-    """贝叶斯推理引擎 - 用于角色推断和概率更新"""
+    """
+    贝叶斯推理引擎 - 用于角色推断和概率更新
+    
+    这是一个适配器类，使用新的优化贝叶斯推理引擎
+    验证需求: AC-2.2.1, AC-2.2.2, AC-2.2.3
+    """
     
     def __init__(self):
-        logger.info("✓ BayesianInferenceEngine initialized")
+        # 使用新的贝叶斯推理引擎
+        self.engine = NewBayesianInference({'prior_probability': 0.33})
+        logger.info("✓ BayesianInferenceEngine initialized (using optimized engine)")
     
     def update_wolf_probability(
         self,
@@ -593,83 +622,172 @@ class BayesianInferenceEngine:
         """
         使用贝叶斯定理更新狼人概率
         
-        P(Wolf|Evidence) = P(Evidence|Wolf) * P(Wolf) / P(Evidence)
+        使用新的优化引擎，支持证据分组和相关性处理
         
-        使用似然比简化计算：
-        Posterior_Odds = Prior_Odds * Likelihood_Ratio
+        Args:
+            player: 玩家名称
+            prior_prob: 先验概率
+            evidence: 证据字典
+        
+        Returns:
+            后验概率
+        
+        验证需求: AC-2.2.1, AC-2.2.2, AC-2.2.3
         """
-        # 计算先验几率（防止除零）
-        prior_odds = prior_prob / max(1e-10, 1 - prior_prob)
+        # 验证输入
+        if not (0 <= prior_prob <= 1):
+            logger.warning(f"Invalid prior_prob: {prior_prob}, clamping to [0, 1]")
+            prior_prob = max(0.0, min(1.0, prior_prob))
         
-        # 计算似然比
-        likelihood_ratio = self._calculate_likelihood_ratio(evidence)
+        # 更新引擎的先验概率
+        self.engine.prior_probability = prior_prob
         
-        # 计算后验几率
-        posterior_odds = prior_odds * likelihood_ratio
+        # 将旧格式的证据转换为新格式
+        evidence_list = self._convert_evidence(evidence)
         
-        # 转换为概率（防止除零）
-        posterior_prob = posterior_odds / max(1.0, 1 + posterior_odds)
+        if not evidence_list:
+            logger.info(f"No evidence for {player}, returning prior probability")
+            return prior_prob
+        
+        # 使用新引擎计算后验概率
+        posterior_prob = self.engine.calculate_posterior(evidence_list)
         
         # 限制范围
         return max(0.01, min(0.99, posterior_prob))
-
     
-    def _calculate_likelihood_ratio(self, evidence: Dict[str, Any]) -> float:
+    def _convert_evidence(self, evidence: Dict[str, Any]) -> List[Evidence]:
         """
-        计算似然比 - 证据在狼人和好人中的出现概率比
+        将旧格式的证据字典转换为新格式的Evidence对象列表
         
-        Likelihood_Ratio = P(Evidence|Wolf) / P(Evidence|Good)
+        Args:
+            evidence: 旧格式证据字典
+        
+        Returns:
+            Evidence对象列表
         """
-        ratio = 1.0
+        evidence_list = []
         
-        # 1. 注入攻击证据
+        # 1. 注入攻击证据（相关证据）
         if evidence.get('injection_detected'):
-            # 狼人注入概率 vs 好人注入概率 = 0.7 / 0.1 = 7
-            ratio *= 7.0
+            lr = self.engine.compute_likelihood_ratio(0.7, 0.1)
+            evidence_list.append(Evidence(
+                "injection_attack",
+                lr,
+                EvidenceType.CORRELATED
+            ))
         
-        # 2. 虚假引用证据
+        # 2. 虚假引用证据（相关证据）
         if evidence.get('false_quote_detected'):
-            # 狼人虚假引用 vs 好人虚假引用 = 0.6 / 0.15 = 4
-            ratio *= 4.0
+            lr = self.engine.compute_likelihood_ratio(0.6, 0.15)
+            evidence_list.append(Evidence(
+                "false_quote",
+                lr,
+                EvidenceType.CORRELATED
+            ))
         
-        # 3. 投票准确度证据
+        # 3. 投票准确度证据（独立证据）
         vote_accuracy = evidence.get('vote_accuracy')
         if vote_accuracy is not None:
             if vote_accuracy < 0.3:
                 # 低准确度更可能是狼人
-                ratio *= 3.0
+                lr = 3.0
             elif vote_accuracy > 0.7:
                 # 高准确度更可能是好人
-                ratio *= 0.3
+                lr = 0.3
+            else:
+                lr = 1.0
+            
+            if lr != 1.0:
+                evidence_list.append(Evidence(
+                    "vote_accuracy",
+                    lr,
+                    EvidenceType.INDEPENDENT
+                ))
         
-        # 4. 发言质量证据
+        # 4. 发言质量证据（独立证据）
         speech_quality = evidence.get('speech_quality')
         if speech_quality is not None:
             if speech_quality < 30:
-                # 低质量发言
-                ratio *= 2.0
+                lr = 2.0
             elif speech_quality > 70:
-                # 高质量发言
-                ratio *= 0.5
+                lr = 0.5
+            else:
+                lr = 1.0
+            
+            if lr != 1.0:
+                evidence_list.append(Evidence(
+                    "speech_quality",
+                    lr,
+                    EvidenceType.INDEPENDENT
+                ))
         
-        # 5. 矛盾证据
+        # 5. 矛盾证据（相关证据）
         contradiction_count = evidence.get('contradictions', 0)
         if contradiction_count > 0:
-            ratio *= (1.5 ** contradiction_count)
+            lr = 1.5 ** contradiction_count
+            evidence_list.append(Evidence(
+                "contradictions",
+                lr,
+                EvidenceType.CORRELATED
+            ))
         
-        # 6. 角色声称证据
+        # 6. 角色声称证据（独立证据，强证据）
         if evidence.get('fake_role_claim'):
-            # 虚假角色声称强烈指向狼人
-            ratio *= 10.0
+            evidence_list.append(Evidence(
+                "fake_role_claim",
+                10.0,
+                EvidenceType.INDEPENDENT
+            ))
         
-        # 7. 预言家验证证据（最强证据）
+        # 7. 预言家验证证据（独立证据，最强证据）
         seer_result = evidence.get('seer_result')
         if seer_result == 'wolf':
-            ratio *= 50.0  # 预言家验出狼人
+            evidence_list.append(Evidence(
+                "seer_check_wolf",
+                50.0,
+                EvidenceType.INDEPENDENT
+            ))
         elif seer_result == 'good':
-            ratio *= 0.02  # 预言家验出好人
+            evidence_list.append(Evidence(
+                "seer_check_good",
+                0.02,
+                EvidenceType.INDEPENDENT
+            ))
         
-        return ratio
+        return evidence_list
+    
+    def _calculate_likelihood_ratio(self, evidence: Dict[str, Any]) -> float:
+        """
+        计算似然比 - 保留向后兼容性
+        
+        这个方法已被新引擎的compute_likelihood_ratio替代，
+        但保留以支持旧代码
+        """
+        # 使用新的转换逻辑
+        evidence_list = self._convert_evidence(evidence)
+        
+        if not evidence_list:
+            return 1.0
+        
+        # 计算组合似然比
+        independent_lr = 1.0
+        correlated_lrs = []
+        
+        for ev in evidence_list:
+            if ev.evidence_type == EvidenceType.INDEPENDENT:
+                independent_lr *= ev.likelihood_ratio
+            else:
+                correlated_lrs.append(ev.likelihood_ratio)
+        
+        # 相关证据使用几何平均
+        correlated_lr = 1.0
+        if correlated_lrs:
+            product = 1.0
+            for lr in correlated_lrs:
+                product *= lr
+            correlated_lr = product ** (1.0 / len(correlated_lrs))
+        
+        return independent_lr * correlated_lr
     
     def infer_role(
         self,

@@ -10,6 +10,7 @@ from typing import Dict, List, Tuple, Optional, Any, Set
 from agent_build_sdk.utils.logger import logger
 from werewolf.core.base_components import BaseDetector, BaseAnalyzer
 from .config import SeerConfig
+from werewolf.optimization.utils.safe_math import safe_divide
 import json
 import re
 
@@ -299,7 +300,7 @@ class FalseQuotationDetector(BaseDetector):
                 false_quote_count += 1
         
         if false_quote_count > 0:
-            confidence = min(1.0, false_quote_count / len(found_quotes))
+            confidence = min(1.0, safe_divide(false_quote_count, len(found_quotes), default=0.0))
             return True, confidence
         
         return False, 0.0

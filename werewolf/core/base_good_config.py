@@ -151,25 +151,26 @@ class BaseGoodConfig(BaseConfig):
             self.TRUST_INJECTION_ATTACK,
             self.TRUST_INJECTION_ATTACK_SYSTEM,
             self.TRUST_INJECTION_ATTACK_STATUS,
-            self.TRUST_FALSE_QUOTATION
+            self.TRUST_FALSE_QUOTATION,
+            self.TRUST_INACCURATE_VOTING
         ]
         if not all(-100 <= p <= 0 for p in trust_penalties):
             raise ValueError("All trust penalties must be between -100 and 0")
         
+        # 注意：TRUST_WOLF_CHECK是负数（被验为狼人）
+        if self.TRUST_WOLF_CHECK >= 0:
+            raise ValueError("TRUST_WOLF_CHECK must be negative (penalty for being checked as wolf)")
+        
+        if not (-100 <= self.TRUST_WOLF_CHECK <= 0):
+            raise ValueError("TRUST_WOLF_CHECK must be between -100 and 0")
+        
+        # 验证正向奖励
         trust_bonuses = [
-            self.TRUST_WOLF_CHECK,
             self.TRUST_GOOD_CHECK,
             self.TRUST_LOGICAL_SPEECH,
             self.TRUST_ACCURATE_VOTING
         ]
-        # 注意：TRUST_WOLF_CHECK是负数（被验为狼人），TRUST_INACCURATE_VOTING也是负数
-        if self.TRUST_WOLF_CHECK >= 0:
-            raise ValueError("TRUST_WOLF_CHECK must be negative (penalty for being checked as wolf)")
-        
-        if self.TRUST_INACCURATE_VOTING >= 0:
-            raise ValueError("TRUST_INACCURATE_VOTING must be negative (penalty for inaccurate voting)")
-        
-        if not all(b > 0 for b in [self.TRUST_GOOD_CHECK, self.TRUST_LOGICAL_SPEECH, self.TRUST_ACCURATE_VOTING]):
-            raise ValueError("Trust bonuses (GOOD_CHECK, LOGICAL_SPEECH, ACCURATE_VOTING) must be positive")
+        if not all(0 < b <= 100 for b in trust_bonuses):
+            raise ValueError("Trust bonuses (GOOD_CHECK, LOGICAL_SPEECH, ACCURATE_VOTING) must be between 0 and 100")
         
         return True

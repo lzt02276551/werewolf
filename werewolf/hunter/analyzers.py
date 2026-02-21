@@ -172,7 +172,7 @@ class TrustScoreAnalyzer(BaseAnalyzer):
         source_reliability: float = 1.0
     ):
         """
-        更新信任分数（企业级实现）
+        更新信任分数（使用优化的Sigmoid衰减算法）
         
         Args:
             player_name: 玩家名称
@@ -180,7 +180,12 @@ class TrustScoreAnalyzer(BaseAnalyzer):
             reason: 更新原因
             confidence: 信息置信度(0.0-1.0)
             source_reliability: 信息来源可靠度(0.0-1.0)
+        
+        验证需求：AC-1.3.1
         """
+        # 导入优化的信任分数更新算法
+        from werewolf.optimization.algorithms.trust_score import update_trust_score
+        
         if not self.validator.validate_player_name(player_name):
             logger.warning(f"[TRUST UPDATE] Invalid player_name: {player_name}")
             return
@@ -196,45 +201,50 @@ class TrustScoreAnalyzer(BaseAnalyzer):
             old_score = trust_scores[player_name]
             
             # 应用置信度和来源可靠性权重
-            weighted_delta = delta * confidence * source_reliability
-            
-            # 非线性衰减：越接近极端值，变化越困难
-            if weighted_delta > 0:
-                resistance = (old_score / 100.0) ** 2
-                weighted_delta *= (1.0 - resistance * 0.5)
-            else:
-                resistance = ((100 - old_score) / 100.0) ** 2
-                weighted_delta *= (1.0 - resistance * 0.5)
+            evidence_impact = delta * confidence * source_reliability
             
             # 历史一致性检查
             if len(trust_history[player_name]) >= 3:
                 recent_changes = trust_history[player_name][-3:]
                 avg_trend = sum(recent_changes) / len(recent_changes)
                 
-                if (avg_trend > 0 and weighted_delta < 0) or (avg_trend < 0 and weighted_delta > 0):
-                    weighted_delta *= 0.5
+                if (avg_trend > 0 and evidence_impact < 0) or (avg_trend < 0 and evidence_impact > 0):
+                    evidence_impact *= 0.5
                     logger.debug(f"[TRUST] {player_name}: Trend reversal detected, dampening change")
             
-            new_score = max(0, min(100, old_score + weighted_delta))
+            # 使用优化的Sigmoid衰减算法
+            config = {
+                'decay_steepness': 0.1,
+                'decay_midpoint': 50.0
+            }
+            
+            new_score = update_trust_score(old_score, evidence_impact, config)
             trust_scores[player_name] = new_score
             
             # 记录历史
-            trust_history[player_name].append(weighted_delta)
+            trust_history[player_name].append(evidence_impact)
             if len(trust_history[player_name]) > 10:
                 trust_history[player_name] = trust_history[player_name][-10:]
             
             logger.info(
                 f"Trust: {player_name} {old_score:.1f} -> {new_score:.1f} "
-                f"(Δ{weighted_delta:.1f}, conf:{confidence:.2f}) - {reason}"
+                f"(Δ{evidence_impact:.1f}, conf:{confidence:.2f}) - {reason} [Sigmoid衰减]"
             )
         else:
             # 初始化
-            weighted_delta = delta * confidence * source_reliability
-            initial_score = max(0, min(100, 50 + weighted_delta))
-            trust_scores[player_name] = initial_score
-            trust_history[player_name].append(weighted_delta)
+            evidence_impact = delta * confidence * source_reliability
             
-            logger.info(f"Trust: {player_name} = {initial_score:.1f} ({reason})")
+            # 使用优化的Sigmoid衰减算法从默认分数50开始
+            config = {
+                'decay_steepness': 0.1,
+                'decay_midpoint': 50.0
+            }
+            
+            initial_score = update_trust_score(50.0, evidence_impact, config)
+            trust_scores[player_name] = initial_score
+            trust_history[player_name].append(evidence_impact)
+            
+            logger.info(f"Trust: {player_name} = {initial_score:.1f} ({reason}) [Sigmoid衰减]")
         
         self.memory_dao.set_trust_scores(trust_scores)
         self.memory_dao.set_trust_history(trust_history)

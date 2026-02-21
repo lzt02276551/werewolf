@@ -10,6 +10,7 @@ from werewolf.core.base_components import BaseDecisionMaker
 from werewolf.common.utils import DataValidator
 from .config import VillagerConfig
 from .analyzers import TrustScoreCalculator, VotingPatternAnalyzer
+from werewolf.optimization.utils.safe_math import safe_divide
 import re
 
 
@@ -91,8 +92,8 @@ class VoteDecisionMaker(BaseDecisionMaker):
         # 1. 基础优先级：基于信任分数
         trust_score = self.trust_calculator.analyze(player_name, context)
         
-        # 非线性转换
-        normalized_trust = trust_score / 100.0
+        # 非线性转换（使用safe_divide）
+        normalized_trust = safe_divide(trust_score, 100.0, default=0.5)
         base_priority = 100.0 * (1.0 - normalized_trust)
         
         # 对极端值进行增强

@@ -7,6 +7,7 @@
 from typing import Dict, Any, List, Optional
 from werewolf.core.base_components import BaseAnalyzer, BaseTrustManager
 from werewolf.core.config import BaseConfig
+from werewolf.optimization.utils.safe_math import safe_divide
 
 
 class TrustAnalyzer(BaseTrustManager):
@@ -47,7 +48,7 @@ class TrustAnalyzer(BaseTrustManager):
         confidence: float = 1.0
     ) -> float:
         """
-        更新玩家信任分数
+        更新玩家信任分数（使用优化的Sigmoid衰减算法）
         
         Args:
             player: 玩家名称
@@ -57,31 +58,43 @@ class TrustAnalyzer(BaseTrustManager):
             
         Returns:
             更新后的分数
+        
+        验证需求：AC-1.3.1
         """
+        # 导入优化的信任分数更新算法
+        from werewolf.optimization.algorithms.trust_score import update_trust_score
+        
         if player not in self.trust_scores:
             self.trust_scores[player] = self.config.trust_score_default
             self.trust_history[player] = []
         
         # 应用置信度
-        adjusted_delta = delta * confidence
+        evidence_impact = delta * confidence
         
-        # 更新分数
+        # 使用优化的Sigmoid衰减算法更新分数
         old_score = self.trust_scores[player]
-        new_score = self.clamp_score(old_score + adjusted_delta)
+        
+        # 配置参数
+        config = {
+            'decay_steepness': 0.1,
+            'decay_midpoint': 50.0
+        }
+        
+        new_score = update_trust_score(old_score, evidence_impact, config)
         self.trust_scores[player] = new_score
         
         # 记录历史
         self.trust_history[player].append({
             'old_score': old_score,
             'new_score': new_score,
-            'delta': adjusted_delta,
+            'delta': evidence_impact,
             'reason': reason,
             'confidence': confidence
         })
         
         self.logger.debug(
             f"Updated trust score for {player}: "
-            f"{old_score:.1f} -> {new_score:.1f} ({reason})"
+            f"{old_score:.1f} -> {new_score:.1f} ({reason}) [Sigmoid衰减]"
         )
         
         return new_score
@@ -301,8 +314,8 @@ class WolfProbabilityAnalyzer(BaseAnalyzer):
         trust_score = self.trust_analyzer.get_score(player)
         
         # 信任分数越低,狼人概率越高
-        # 将信任分数(0-100)转换为概率(0-1)
-        base_probability = 1.0 - (trust_score / 100.0)
+        # 将信任分数(0-100)转换为概率(0-1)，使用safe_divide
+        base_probability = 1.0 - safe_divide(trust_score, 100.0, default=0.5)
         
         # 考虑其他因素
         adjustments = self._calculate_adjustments(player, context)

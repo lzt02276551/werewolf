@@ -1,4 +1,9 @@
-# Python
+# Git相关
+.git
+.gitignore
+.gitattributes
+
+# Python缓存
 __pycache__/
 *.py[cod]
 *$py.class
@@ -8,51 +13,64 @@ __pycache__/
 dist/
 build/
 
-# 虚拟环境
-venv/
-env/
-ENV/
+# 测试相关
+tests/
+test_*.py
+*_test.py
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
 
-# IDE
+# 文档（保留README.md）
+*.md
+!README.md
+!DEPLOY_README.md
+docs/
+
+# IDE和编辑器
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.DS_Store
+
+# 日志和临时文件
+*.log
+logs/
+tmp/
+temp/
+
+# 部署相关（不需要打包进镜像）
+deploy_package/
+prepare_deploy.py
+run_tests.py
+verify_*.py
+check_*.py
+
+# Kiro相关
 .kiro/
 
-# Git
-.git/
-.gitignore
-.gitattributes
+# 开发工具
+Makefile
+*.sh
+!start.sh
 
-# 测试和开发文件
-test_*.py
-*_test.py
-check_*.py
-generate_*.py
-game_data_collector.py
-
-# 文档和报告
-*.md
-!README.md
-
-# 配置文件
+# 环境文件
 .env
-.env.example
+.env.*
+venv/
+env/
 
-# 不需要的依赖文件
-requirements.txt
-
-# ML训练相关（部署时不需要）
-ml_golden_path/
-golden_path_integration.py
-incremental_learning.py
-
-# 已有的模型和数据（部署时会重新生成）
-ml_models/
+# 数据文件（运行时生成）
 game_data/
+ml_models/
+*.json
+*.csv
+*.pkl
 
-# 部署配置（会单独复制）
-ms_deploy.json
-Dockerfile
-.dockerignore
+# 其他
+*.bak
+*.tmp
+*.cache

@@ -125,7 +125,7 @@ class GameState:
     
     def validate(self) -> bool:
         """
-        验证游戏状态有效性
+        验证游戏状态有效性（优化版 - 复用set）
         
         Returns:
             状态是否有效
@@ -139,13 +139,25 @@ class GameState:
         if not self.alive_players:
             raise InvalidGameStateError("alive_players cannot be empty")
         
-        # 检查玩家列表是否有重复
-        all_players = set(self.alive_players + self.dead_players)
-        if len(all_players) != len(self.alive_players) + len(self.dead_players):
-            raise InvalidGameStateError("Duplicate players in alive and dead lists")
+        # 一次性创建set，复用（性能优化）
+        alive_set = set(self.alive_players)
+        dead_set = set(self.dead_players)
         
-        # 检查警长是否在存活玩家中
-        if self.sheriff and self.sheriff not in self.alive_players:
+        # 检查alive_players内部重复
+        if len(self.alive_players) != len(alive_set):
+            raise InvalidGameStateError("Duplicate players in alive_players list")
+        
+        # 检查dead_players内部重复
+        if len(self.dead_players) != len(dead_set):
+            raise InvalidGameStateError("Duplicate players in dead_players list")
+        
+        # 检查alive和dead之间的重复（复用已创建的set）
+        overlap = alive_set & dead_set
+        if overlap:
+            raise InvalidGameStateError(f"Players in both alive and dead lists: {overlap}")
+        
+        # 检查警长是否在存活玩家中（复用alive_set）
+        if self.sheriff and self.sheriff not in alive_set:
             raise InvalidGameStateError(f"Sheriff {self.sheriff} is not in alive players")
         
         return True

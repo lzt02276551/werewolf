@@ -8,6 +8,7 @@ from typing import Dict, List, Tuple, Optional
 from agent_build_sdk.utils.logger import logger
 from werewolf.core.base_components import BaseDecisionMaker
 from werewolf.wolf.config import WolfConfig
+from werewolf.optimization.utils.safe_math import safe_divide
 
 
 class WolfDecisionEngine(BaseDecisionMaker):
@@ -130,7 +131,7 @@ class WolfDecisionEngine(BaseDecisionMaker):
         score = scores[target]
         
         reason = self._generate_kill_reason(target, score, context)
-        confidence = score / 100.0
+        confidence = safe_divide(score, 100.0, default=0.5)
         
         self.logger.info(f"[KILL] {target}: {score:.1f}/100 - {reason}")
         return target, reason, confidence
@@ -166,7 +167,7 @@ class WolfDecisionEngine(BaseDecisionMaker):
             target = min(scores.items(), key=lambda x: x[1])[0]
             score = scores[target]
             reason = f"Teammate with lowest threat (threat: {score:.1f})"
-            confidence = score / 100.0
+            confidence = safe_divide(score, 100.0, default=0.5)
             self.logger.info(f"[VOTE] {target}: {score:.1f}/100 - {reason}")
             return target, reason, confidence
         
@@ -194,7 +195,7 @@ class WolfDecisionEngine(BaseDecisionMaker):
         if ml_predictions and target in ml_predictions:
             reason += f", ML good_prob: {(1-ml_predictions[target]):.2f}"
         
-        confidence = min(1.0, score / 100.0)
+        confidence = min(1.0, safe_divide(score, 100.0, default=0.5))
         
         self.logger.info(f"[VOTE] {target}: {score:.1f}/100 - {reason}")
         return target, reason, confidence

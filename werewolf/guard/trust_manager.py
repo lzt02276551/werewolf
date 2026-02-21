@@ -99,10 +99,10 @@ class TrustScoreManager:
     def update_score(self, player: str, delta: float, reason: str = "", 
                     confidence: float = 1.0, source_reliability: float = 1.0) -> None:
         """
-        更新信任分数（企业级非线性衰减算法）
+        更新信任分数（使用优化的Sigmoid衰减算法）
         
         特性：
-        1. 非线性衰减：越接近极端值，变化越困难
+        1. Sigmoid非线性衰减：越接近极端值，变化越困难
         2. 置信度权重：不同证据有不同可信度
         3. 来源可靠性：不同来源有不同权重
         4. 历史一致性检查：与历史趋势相反时减弱
@@ -114,7 +114,12 @@ class TrustScoreManager:
             reason: 变化原因
             confidence: 证据置信度（0.0-1.0）
             source_reliability: 来源可靠性（0.0-1.0）
+        
+        验证需求：AC-1.3.1
         """
+        # 导入优化的信任分数更新算法
+        from werewolf.optimization.algorithms.trust_score import update_trust_score
+        
         # 输入验证
         if not player or not isinstance(player, str):
             logger.warning(f"[TrustManager] Invalid player: {player}")
@@ -142,32 +147,33 @@ class TrustScoreManager:
             current_score = self.config.DEFAULT_SCORE
             trust_scores[player] = current_score
         
-        # 1. 非线性衰减
-        decay_factor = self._calculate_decay_factor(current_score, delta)
+        # 1. 应用置信度和来源可靠性权重
+        evidence_impact = delta * confidence * source_reliability
         
-        # 2. 应用置信度和来源可靠性权重
-        weighted_delta = delta * confidence * source_reliability * decay_factor
-        
-        # 3. 历史一致性检查
+        # 2. 历史一致性检查
         trust_history = self._get_trust_history()
         if player in trust_history and len(trust_history[player]) >= 3:
-            weighted_delta = self._apply_trend_check(player, weighted_delta, trust_history)
+            evidence_impact = self._apply_trend_check_to_impact(player, evidence_impact, trust_history)
         
-        # 4. 应用变化
-        new_score = current_score + weighted_delta
-        new_score = max(self.config.MIN_SCORE, min(self.config.MAX_SCORE, new_score))
+        # 3. 使用优化的Sigmoid衰减算法更新分数
+        config = {
+            'decay_steepness': 0.1,
+            'decay_midpoint': 50.0
+        }
         
-        # 5. 记录历史
-        self._record_history(player, weighted_delta, trust_history)
+        new_score = update_trust_score(current_score, evidence_impact, config)
         
-        # 6. 更新分数
+        # 4. 记录历史
+        self._record_history(player, evidence_impact, trust_history)
+        
+        # 5. 更新分数
         trust_scores[player] = new_score
         self._set_trust_scores(trust_scores)
         self._set_trust_history(trust_history)
         
         logger.info(f"[TrustManager] {player}: {current_score:.1f} -> {new_score:.1f} "
-                   f"(delta={delta:+.1f}, weighted={weighted_delta:+.1f}, "
-                   f"conf={confidence:.2f}, src={source_reliability:.2f}) - {reason}")
+                   f"(delta={delta:+.1f}, impact={evidence_impact:+.1f}, "
+                   f"conf={confidence:.2f}, src={source_reliability:.2f}) - {reason} [Sigmoid衰减]")
     
     def get_score(self, player: str) -> float:
         """
@@ -217,39 +223,17 @@ class TrustScoreManager:
         top_scores = sorted_scores[:top_n]
         return "Trust scores: " + ", ".join([f"{p}({s:.0f})" for p, s in top_scores])
     
-    def _calculate_decay_factor(self, current_score: float, delta: float) -> float:
+    def _apply_trend_check_to_impact(self, player: str, evidence_impact: float, trust_history: Dict) -> float:
         """
-        计算非线性衰减因子
-        
-        Args:
-            current_score: 当前分数
-            delta: 变化量
-        
-        Returns:
-            衰减因子（0.1-1.0）
-        """
-        if delta > 0:
-            # 增加信任：越接近100，增加越困难
-            distance_to_max = self.config.MAX_SCORE - current_score
-            decay_factor = max(self.config.MIN_DECAY_FACTOR, distance_to_max / self.config.MAX_SCORE)
-        else:
-            # 减少信任：越接近0，减少越困难
-            distance_to_min = current_score - self.config.MIN_SCORE
-            decay_factor = max(self.config.MIN_DECAY_FACTOR, distance_to_min / self.config.MAX_SCORE)
-        
-        return decay_factor
-    
-    def _apply_trend_check(self, player: str, weighted_delta: float, trust_history: Dict) -> float:
-        """
-        应用历史趋势检查
+        应用历史趋势检查到证据影响
         
         Args:
             player: 玩家名称
-            weighted_delta: 加权后的变化量
+            evidence_impact: 证据影响量
             trust_history: 信任历史
         
         Returns:
-            调整后的变化量
+            调整后的证据影响量
         """
         recent_changes = trust_history[player][-3:]
         
@@ -257,34 +241,88 @@ class TrustScoreManager:
         recent_changes = [x for x in recent_changes if isinstance(x, (int, float))]
         
         if not recent_changes:
-            return weighted_delta
+            return evidence_impact
         
         avg_recent_delta = sum(recent_changes) / len(recent_changes)
         
         # 如果当前变化与历史趋势相反（符号不同），减弱50%
-        if (avg_recent_delta > 0 and weighted_delta < 0) or (avg_recent_delta < 0 and weighted_delta > 0):
+        if (avg_recent_delta > 0 and evidence_impact < 0) or (avg_recent_delta < 0 and evidence_impact > 0):
             logger.debug(f"[TrustManager] {player} - Trend reversal detected, weakening change by 50%")
-            return weighted_delta * self.config.TREND_REVERSAL_FACTOR
+            return evidence_impact * self.config.TREND_REVERSAL_FACTOR
         
-        return weighted_delta
+        return evidence_impact
     
     def _record_history(self, player: str, weighted_delta: float, trust_history: Dict) -> None:
         """
-        记录信任分数变化历史
+        记录信任分数变化历史（带验证和清理）
         
         Args:
             player: 玩家名称
             weighted_delta: 加权后的变化量
             trust_history: 信任历史字典
         """
+        # 验证输入
+        if not isinstance(player, str):
+            logger.warning(f"[TrustManager] Invalid player type: {type(player)}, skipping history record")
+            return
+        
+        if not isinstance(weighted_delta, (int, float)):
+            logger.warning(f"[TrustManager] Invalid weighted_delta type: {type(weighted_delta)}, skipping")
+            return
+        
+        if not isinstance(trust_history, dict):
+            logger.error(f"[TrustManager] Invalid trust_history type: {type(trust_history)}, cannot record")
+            return
+        
+        # 初始化玩家历史
         if player not in trust_history:
             trust_history[player] = []
         
+        # 验证玩家历史是列表
+        if not isinstance(trust_history[player], list):
+            logger.warning(f"[TrustManager] Player {player} history is not a list, resetting")
+            trust_history[player] = []
+        
+        # 添加新记录
         trust_history[player].append(weighted_delta)
         
-        # 只保留最近N次
+        # 只保留最近N次（防止内存无限增长）
         if len(trust_history[player]) > self.config.MAX_HISTORY_LENGTH:
             trust_history[player] = trust_history[player][-self.config.MAX_HISTORY_LENGTH:]
+        
+        # 定期清理：如果总玩家数超过100，只保留最近活跃的50个
+        if len(trust_history) > 100:
+            logger.info(f"[TrustManager] Trust history has {len(trust_history)} players, cleaning up...")
+            self._cleanup_old_players(trust_history)
+    
+    def _cleanup_old_players(self, trust_history: Dict) -> None:
+        """
+        清理不活跃的玩家历史记录
+        
+        Args:
+            trust_history: 信任历史字典
+        """
+        # 获取当前游戏中的玩家
+        trust_scores = self._get_trust_scores()
+        active_players = set(trust_scores.keys())
+        
+        # 找出不活跃的玩家（不在当前trust_scores中）
+        inactive_players = set(trust_history.keys()) - active_players
+        
+        # 如果不活跃玩家太多，删除一些
+        if len(inactive_players) > 50:
+            # 按历史记录长度排序，删除记录最少的
+            sorted_inactive = sorted(
+                inactive_players,
+                key=lambda p: len(trust_history.get(p, []))
+            )
+            
+            # 删除前一半
+            to_remove = sorted_inactive[:len(sorted_inactive) // 2]
+            for player in to_remove:
+                del trust_history[player]
+            
+            logger.info(f"[TrustManager] Cleaned up {len(to_remove)} inactive player histories")
     
     def _get_trust_scores(self) -> Dict[str, float]:
         """安全获取信任分数字典"""

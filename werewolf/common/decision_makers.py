@@ -7,6 +7,7 @@
 from typing import Dict, Any, List, Tuple, Optional
 from werewolf.core.base_components import BaseDecisionMaker
 from werewolf.core.config import BaseConfig
+from werewolf.optimization.utils.safe_math import safe_divide
 from .analyzers import TrustAnalyzer, WolfProbabilityAnalyzer
 
 
@@ -108,7 +109,7 @@ class VoteDecisionMaker(BaseDecisionMaker):
             
             # 信任分数影响
             trust_score = self.trust_analyzer.get_score(candidate)
-            trust_factor = 1.0 - (trust_score / 100.0)
+            trust_factor = 1.0 - safe_divide(trust_score, 100.0, default=0.5)
             
             # 综合得分
             score = wolf_prob * 0.7 + trust_factor * 0.3

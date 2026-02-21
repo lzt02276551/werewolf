@@ -7,6 +7,7 @@
 from typing import Any, Optional, Dict
 import time
 import re
+import threading
 
 
 class DataValidator:
@@ -219,18 +220,23 @@ class DataValidator:
 
 class CacheManager:
     """
-    缓存管理器(单例模式)
+    缓存管理器(单例模式 - 线程安全)
     
     提供简单的内存缓存功能
     """
     
     _instance = None
+    _lock = threading.Lock()
     
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._cache = {}
-            cls._instance._timestamps = {}
+            with cls._lock:
+                # 双重检查锁定
+                if cls._instance is None:
+                    instance = super().__new__(cls)
+                    instance._cache = {}
+                    instance._timestamps = {}
+                    cls._instance = instance
         return cls._instance
     
     def get(self, key: str, ttl: Optional[int] = None) -> Optional[Any]:

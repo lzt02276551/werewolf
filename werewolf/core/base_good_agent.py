@@ -265,7 +265,8 @@ class BaseGoodAgent(BasicRoleAgent):
             self._init_fallback_detectors()
     
     def _init_fallback_detectors(self):
-        """初始化降级检测器"""
+        """初始化降级检测器（多层降级策略）"""
+        # 第一层降级：尝试使用旧版检测器
         try:
             from werewolf.villager.detectors import (
                 InjectionDetector, FalseQuoteDetector, 
@@ -277,13 +278,60 @@ class BaseGoodAgent(BasicRoleAgent):
             self.message_parser = MessageParser(self.config, self.detection_client)
             self.speech_quality_evaluator = SpeechQualityEvaluator(self.config, self.detection_client)
             
-            logger.warning("⚠ 使用旧版检测器（降级模式）")
-        except Exception as e2:
-            logger.error(f"✗ 降级检测器初始化也失败: {e2}")
-            self.injection_detector = None
-            self.false_quote_detector = None
-            self.message_parser = None
-            self.speech_quality_evaluator = None
+            logger.warning("⚠ 使用旧版检测器（第一层降级）")
+            return
+        except ImportError as e:
+            logger.error(f"✗ 无法导入旧版检测器: {e}")
+        except TypeError as e:
+            logger.error(f"✗ 旧版检测器初始化参数错误: {e}")
+        except Exception as e:
+            logger.error(f"✗ 旧版检测器初始化失败: {e}")
+        
+        # 第二层降级：尝试使用简化版检测器（不依赖LLM）
+        try:
+            from werewolf.common.detectors import (
+                SimpleInjectionDetector, SimpleFalseQuoteDetector,
+                SimpleMessageParser, SimpleSpeechQualityEvaluator
+            )
+            
+            self.injection_detector = SimpleInjectionDetector()
+            self.false_quote_detector = SimpleFalseQuoteDetector()
+            self.message_parser = SimpleMessageParser()
+            self.speech_quality_evaluator = SimpleSpeechQualityEvaluator()
+            
+            logger.warning("⚠ 使用简化版检测器（第二层降级，无LLM）")
+            return
+        except ImportError as e:
+            logger.error(f"✗ 无法导入简化版检测器: {e}")
+        except Exception as e:
+            logger.error(f"✗ 简化版检测器初始化失败: {e}")
+        
+        # 第三层降级：使用最小功能的占位符
+        logger.error("✗ 所有降级方案都失败，使用占位符检测器")
+        self._init_placeholder_detectors()
+    
+    def _init_placeholder_detectors(self):
+        """初始化占位符检测器（最小功能）"""
+        class PlaceholderDetector:
+            """占位符检测器 - 总是返回安全的默认值"""
+            def detect(self, *args, **kwargs):
+                return False
+            
+            def analyze(self, *args, **kwargs):
+                return {}
+            
+            def parse(self, *args, **kwargs):
+                return {}
+            
+            def evaluate(self, *args, **kwargs):
+                return 0.5
+        
+        self.injection_detector = PlaceholderDetector()
+        self.false_quote_detector = PlaceholderDetector()
+        self.message_parser = PlaceholderDetector()
+        self.speech_quality_evaluator = PlaceholderDetector()
+        
+        logger.warning("⚠ 使用占位符检测器（最小功能模式）")
         
         # 分析器 - 使用平民的实现作为默认实现
         try:

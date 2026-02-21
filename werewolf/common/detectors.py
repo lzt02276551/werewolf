@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional
 import re
 from werewolf.core.base_components import BaseDetector
 from werewolf.core.config import BaseConfig
+from werewolf.optimization.utils.safe_math import safe_divide
 
 
 class InjectionDetector(BaseDetector):
@@ -155,7 +156,7 @@ class FalseQuoteDetector(BaseDetector):
                     false_quotes.append(quote)
             
             detected = len(false_quotes) > 0
-            confidence = len(false_quotes) / len(quotes) if quotes else 0.0
+            confidence = safe_divide(len(false_quotes), len(quotes), default=0.0)
             
             return {
                 'detected': detected,
@@ -245,7 +246,7 @@ class FalseQuoteDetector(BaseDetector):
         intersection = len(words1 & words2)
         union = len(words1 | words2)
         
-        similarity = intersection / union if union > 0 else 0
+        similarity = safe_divide(intersection, union, default=0.0)
         return similarity >= threshold
 
 

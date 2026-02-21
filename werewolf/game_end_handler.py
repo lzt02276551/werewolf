@@ -44,6 +44,11 @@ class GameEndHandler:
         Args:
             result_message: 游戏结果消息（包含获胜方信息）
         """
+        # 输入验证
+        if not isinstance(result_message, str):
+            logger.error(f"Invalid result_message type: {type(result_message)}, expected str")
+            result_message = str(result_message) if result_message else "Unknown result"
+        
         if not self.learning_system:
             logger.debug("Learning system not available, skipping data collection")
             return
@@ -64,21 +69,31 @@ class GameEndHandler:
                 logger.warning("No player data collected, skipping")
                 return
             
+            # 验证players_data类型
+            if not isinstance(players_data, list):
+                logger.error(f"Invalid players_data type: {type(players_data)}, expected list")
+                return
+            
             # 调用增量学习系统
             result = self.learning_system.on_game_end(
                 self.current_game_id,
                 players_data
             )
             
-            # 记录结果
+            # 验证result类型
+            if not isinstance(result, dict):
+                logger.error(f"Invalid result type from learning_system: {type(result)}")
+                return
+            
+            # 记录结果（带默认值）
             logger.info("=" * 60)
             logger.info(f"✓ 游戏 {self.current_game_id} 数据收集完成")
-            logger.info(f"  - 数据已收集: {result['data_collected']}")
-            logger.info(f"  - 触发重训练: {result['retrain_triggered']}")
-            logger.info(f"  - 总游戏数: {result['game_count']}")
-            logger.info(f"  - 下次重训练: 第{result['next_retrain_at']}局")
+            logger.info(f"  - 数据已收集: {result.get('data_collected', False)}")
+            logger.info(f"  - 触发重训练: {result.get('retrain_triggered', False)}")
+            logger.info(f"  - 总游戏数: {result.get('game_count', 0)}")
+            logger.info(f"  - 下次重训练: 第{result.get('next_retrain_at', 0)}局")
             
-            if result['retrain_triggered']:
+            if result.get('retrain_triggered', False):
                 logger.info("🎉 模型已更新！ML变得更强了！")
             
             logger.info("=" * 60)
@@ -87,10 +102,16 @@ class GameEndHandler:
             self.current_game_id = None
             self.players_stats = {}
             
-        except (ValueError, KeyError, TypeError) as e:
-            logger.error(f"游戏结束处理参数错误: {e}")
+        except ValueError as e:
+            logger.error(f"游戏结束处理数值错误: {e}")
+        except KeyError as e:
+            logger.error(f"游戏结束处理缺少必需字段: {e}")
+        except TypeError as e:
+            logger.error(f"游戏结束处理类型错误: {e}")
+        except AttributeError as e:
+            logger.error(f"游戏结束处理属性错误（可能learning_system未正确初始化）: {e}")
         except Exception as e:
-            logger.error(f"游戏结束处理失败: {e}", exc_info=True)
+            logger.error(f"游戏结束处理未知错误: {e}", exc_info=True)
     
     def _extract_winner(self, result_message: str) -> str:
         """从结果消息中提取获胜方"""

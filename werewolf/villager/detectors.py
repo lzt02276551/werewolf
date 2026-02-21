@@ -14,6 +14,7 @@ from typing import Dict, List, Tuple, Optional, Any
 from agent_build_sdk.utils.logger import logger
 from werewolf.core.base_components import BaseDetector
 from .config import VillagerConfig
+from werewolf.optimization.utils.safe_math import safe_divide
 import re
 import json
 import os
@@ -509,7 +510,8 @@ class FalseQuoteDetector(LLMDetectorBase):
                     key_words = [w for w in quoted_content_lower.split() if len(w) > 3]
                     if key_words:
                         matching_words = sum(1 for word in key_words if word in actual_speech)
-                        if matching_words / len(key_words) > 0.5:
+                        match_ratio = safe_divide(matching_words, len(key_words), default=0.0)
+                        if match_ratio > 0.5:
                             found_in_history = True
                             break
 

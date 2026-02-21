@@ -37,7 +37,7 @@ class TrustScoreManager(BaseTrustManager):
     
     def update_score(self, player: str, delta: float, reason: str = "") -> float:
         """
-        更新玩家信任分数（简化版）
+        更新玩家信任分数（使用优化的Sigmoid衰减算法）
         
         Args:
             player: 玩家名称
@@ -46,13 +46,25 @@ class TrustScoreManager(BaseTrustManager):
             
         Returns:
             更新后的分数
+        
+        验证需求：AC-1.3.1
         """
+        # 导入优化的信任分数更新算法
+        from werewolf.optimization.algorithms.trust_score import update_trust_score
+        
         current = self.trust_scores.get(player, self.config.trust_score_default)
-        new_score = self.clamp_score(current + delta)
+        
+        # 使用优化的Sigmoid衰减算法
+        config = {
+            'decay_steepness': 0.1,
+            'decay_midpoint': 50.0
+        }
+        
+        new_score = update_trust_score(current, delta, config)
         self.trust_scores[player] = new_score
         
         if reason:
-            self.logger.debug(f"信任分数更新: {player} {current:.0f} -> {new_score:.0f} ({reason})")
+            self.logger.debug(f"信任分数更新: {player} {current:.0f} -> {new_score:.0f} ({reason}) [Sigmoid衰减]")
         
         return new_score
     

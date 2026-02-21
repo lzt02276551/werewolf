@@ -6,6 +6,7 @@ import os
 import sys
 import logging
 import numpy as np
+from werewolf.optimization.utils.safe_math import safe_divide
 
 logger = logging.getLogger(__name__)
 
@@ -66,47 +67,151 @@ class LightweightMLAgent:
             self.enabled = False
     
     def predict_wolf_probability(self, player_data):
-        """预测狼人概率"""
+        """
+        预测狼人概率 - 增强版错误处理
+        
+        Args:
+            player_data: 玩家特征数据字典
+            
+        Returns:
+            float: 狼人概率 (0.0-1.0)
+        """
+        # 1. 输入验证
         if not self.enabled:
+            logger.warning("ML agent not enabled, returning default 0.5")
+            return 0.5
+        
+        if player_data is None:
+            logger.error("player_data is None, returning default 0.5")
+            return 0.5
+        
+        if not isinstance(player_data, dict):
+            logger.error(f"Invalid player_data type: {type(player_data)}, expected dict")
             return 0.5
         
         predictions = {}
+        failed_models = []  # 记录失败的模型
         
-        # 1. Ensemble预测
+        # 2. Ensemble预测
         if hasattr(self.ensemble, 'is_trained') and self.ensemble.is_trained:
             try:
                 pred = self.ensemble.predict_wolf_probability(player_data)
-                predictions['ensemble'] = pred
+                
+                # 验证预测结果
+                if not isinstance(pred, (int, float)):
+                    raise ValueError(f"Invalid prediction type: {type(pred)}, expected float")
+                if not (0 <= pred <= 1):
+                    raise ValueError(f"Prediction out of range: {pred}, expected [0, 1]")
+                
+                predictions['ensemble'] = float(pred)
+                logger.debug(f"Ensemble prediction: {pred:.3f}")
+                
+            except ValueError as e:
+                logger.warning(f"Ensemble prediction value error: {e}")
+                failed_models.append(('ensemble', 'value_error', str(e)))
+            except TypeError as e:
+                logger.warning(f"Ensemble prediction type error: {e}")
+                failed_models.append(('ensemble', 'type_error', str(e)))
+            except AttributeError as e:
+                logger.error(f"Ensemble prediction attribute error: {e}")
+                failed_models.append(('ensemble', 'attribute_error', str(e)))
             except Exception as e:
-                logger.debug(f"Ensemble prediction failed: {e}")
+                logger.error(f"Ensemble prediction unexpected error: {e}", exc_info=True)
+                failed_models.append(('ensemble', 'unexpected', str(e)))
         
-        # 2. 异常检测
+        # 3. 异常检测
         if hasattr(self.anomaly, 'is_fitted') and self.anomaly.is_fitted:
             try:
                 pred = self.anomaly.get_wolf_probability(player_data)
-                predictions['anomaly'] = pred
+                
+                if not isinstance(pred, (int, float)):
+                    raise ValueError(f"Invalid prediction type: {type(pred)}")
+                if not (0 <= pred <= 1):
+                    raise ValueError(f"Prediction out of range: {pred}")
+                
+                predictions['anomaly'] = float(pred)
+                logger.debug(f"Anomaly prediction: {pred:.3f}")
+                
+            except ValueError as e:
+                logger.warning(f"Anomaly prediction value error: {e}")
+                failed_models.append(('anomaly', 'value_error', str(e)))
+            except TypeError as e:
+                logger.warning(f"Anomaly prediction type error: {e}")
+                failed_models.append(('anomaly', 'type_error', str(e)))
+            except AttributeError as e:
+                logger.error(f"Anomaly prediction attribute error: {e}")
+                failed_models.append(('anomaly', 'attribute_error', str(e)))
             except Exception as e:
-                logger.debug(f"Anomaly prediction failed: {e}")
+                logger.error(f"Anomaly prediction unexpected error: {e}", exc_info=True)
+                failed_models.append(('anomaly', 'unexpected', str(e)))
         
-        # 3. 贝叶斯推理
+        # 4. 贝叶斯推理
         try:
             pred = self.bayesian.analyze_player(player_data)
-            predictions['bayesian'] = pred
+            
+            if not isinstance(pred, (int, float)):
+                raise ValueError(f"Invalid prediction type: {type(pred)}")
+            if not (0 <= pred <= 1):
+                raise ValueError(f"Prediction out of range: {pred}")
+            
+            predictions['bayesian'] = float(pred)
+            logger.debug(f"Bayesian prediction: {pred:.3f}")
+            
+        except ValueError as e:
+            logger.warning(f"Bayesian prediction value error: {e}")
+            failed_models.append(('bayesian', 'value_error', str(e)))
+        except TypeError as e:
+            logger.warning(f"Bayesian prediction type error: {e}")
+            failed_models.append(('bayesian', 'type_error', str(e)))
+        except AttributeError as e:
+            logger.error(f"Bayesian prediction attribute error: {e}")
+            failed_models.append(('bayesian', 'attribute_error', str(e)))
         except Exception as e:
-            logger.debug(f"Bayesian prediction failed: {e}")
+            logger.error(f"Bayesian prediction unexpected error: {e}", exc_info=True)
+            failed_models.append(('bayesian', 'unexpected', str(e)))
         
-        # 加权融合
+        # 5. 记录失败情况
+        if failed_models:
+            logger.warning(f"ML prediction failures: {len(failed_models)}/{3} models failed")
+            for model_name, error_type, error_msg in failed_models:
+                logger.debug(f"  - {model_name}: {error_type} - {error_msg[:50]}")
+            
+            # 如果所有模型都失败,记录ERROR级别
+            if len(failed_models) == 3:
+                logger.error("❌ ALL ML models failed! Returning default 0.5")
+                return 0.5
+        
+        # 6. 加权融合（优化：使用epsilon阈值判断）
         if not predictions:
+            logger.error("No valid predictions available, returning default 0.5")
             return 0.5
         
+        logger.info(f"✓ ML prediction successful: {len(predictions)}/{3} models")
+        
+        EPSILON = 1e-10  # 浮点数比较阈值
         total_weight = sum(self.weights[k] for k in predictions.keys())
-        if total_weight == 0:
-            return 0.5
-        normalized_weights = {k: self.weights[k] / total_weight for k in predictions.keys()}
+        
+        # 使用epsilon阈值判断，避免数值不稳定
+        if total_weight < EPSILON:
+            logger.error(f"Total weight too small: {total_weight}, using equal weights")
+            # 使用等权重
+            normalized_weights = {k: 1.0 / len(predictions) for k in predictions.keys()}
+        else:
+            # 使用safe_divide计算归一化权重
+            normalized_weights = {
+                k: safe_divide(self.weights[k], total_weight, default=0.0, epsilon=EPSILON) 
+                for k in predictions.keys()
+            }
         
         final_prob = sum(predictions[k] * normalized_weights[k] for k in predictions.keys())
         
-        logger.debug(f"Wolf prob: {final_prob:.3f} (from {len(predictions)} models)")
+        # 确保结果在有效范围内
+        final_prob = max(0.0, min(1.0, final_prob))
+        
+        logger.debug(f"Predictions: {predictions}")
+        logger.debug(f"Weights: {normalized_weights}")
+        logger.debug(f"Final probability: {final_prob:.3f}")
+        
         return final_prob
     
     def train(self, training_data):

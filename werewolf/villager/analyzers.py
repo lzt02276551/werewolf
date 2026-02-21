@@ -11,6 +11,13 @@ from werewolf.common.utils import DataValidator
 from .config import VillagerConfig
 import math
 
+# 导入优化组件
+from werewolf.optimization.utils.safe_math import safe_divide
+from werewolf.optimization.algorithms.trust_score import (
+    sigmoid_decay_factor,
+    update_trust_score
+)
+
 
 def safe_execute(default_return=None):
     """装饰器：安全执行函数，捕获异常并返回默认值"""
@@ -66,7 +73,7 @@ class TrustScoreManager(BaseAnalyzer):
     def _update_trust_score(self, player: str, delta: int, confidence: float, 
                            source_reliability: float, trust_scores: Dict[str, int]) -> int:
         """
-        内部方法: 企业级信任分数更新算法 - 非线性衰减机制
+        内部方法: 企业级信任分数更新算法 - 使用优化的Sigmoid衰减机制
         
         Args:
             player: 玩家名称
@@ -77,27 +84,31 @@ class TrustScoreManager(BaseAnalyzer):
         
         Returns:
             new_score: 更新后的信任分数 (0-100)
+        
+        验证需求: AC-1.3.1, AC-1.3.2
         """
         current_score = trust_scores.get(player, 50)
         
         # 1. 应用置信度和来源可靠性权重
         weighted_delta = delta * confidence * source_reliability
         
-        # 2. 非线性衰减：使用sigmoid函数
-        def decay_factor(score, target_direction):
-            """计算衰减系数（0-100范围）"""
-            if target_direction > 0:
-                # 向100靠近，衰减系数随分数增加而减小
-                distance_to_max = 100 - score
-                return max(0.1, distance_to_max / 100)
-            else:
-                # 向0靠近，衰减系数随分数减小而减小
-                distance_to_min = score
-                return max(0.1, distance_to_min / 100)
+        # 2. 使用新的Sigmoid衰减算法
+        # 配置参数
+        config = {
+            'decay_steepness': 0.1,
+            'decay_midpoint': 50.0
+        }
         
-        direction = 1 if weighted_delta > 0 else -1
-        decay = decay_factor(current_score, direction)
-        adjusted_delta = weighted_delta * decay
+        # 使用优化的update_trust_score函数
+        new_score = update_trust_score(
+            float(current_score),
+            weighted_delta,
+            config
+        )
+        
+        # 转换为整数
+        new_score = int(new_score)
+        trust_scores[player] = new_score
         
         # 3. 历史一致性检查
         if player not in self.trust_history:
@@ -109,19 +120,23 @@ class TrustScoreManager(BaseAnalyzer):
         if len(player_history) >= 2:
             recent_deltas = [h['delta'] for h in player_history[-3:]]
             recent_trend = sum(1 if d > 0 else -1 for d in recent_deltas)
-            current_direction = 1 if adjusted_delta > 0 else -1
+            current_direction = 1 if weighted_delta > 0 else -1
             
             if (recent_trend > 1 and current_direction < 0) or (recent_trend < -1 and current_direction > 0):
-                adjusted_delta *= 0.5
+                # 趋势反转，重新计算
+                adjusted_weighted_delta = weighted_delta * 0.5
+                new_score = update_trust_score(
+                    float(current_score),
+                    adjusted_weighted_delta,
+                    config
+                )
+                new_score = int(new_score)
+                trust_scores[player] = new_score
                 logger.debug(f"Trust trend reversal detected for {player}, weakening delta by 50%")
         
-        # 4. 应用变化
-        new_score = self.clamp(int(current_score + adjusted_delta))
-        trust_scores[player] = new_score
-        
-        # 5. 记录历史（保留最近10次）
+        # 4. 记录历史（保留最近10次）
         player_history.append({
-            'delta': adjusted_delta,
+            'delta': weighted_delta,
             'confidence': confidence,
             'source_reliability': source_reliability,
             'old_score': current_score,
@@ -130,15 +145,14 @@ class TrustScoreManager(BaseAnalyzer):
         if len(player_history) > self.config.MAX_TRUST_HISTORY_PER_PLAYER:
             player_history.pop(0)
         
-        # 6. 全局清理：限制总历史记录数（防止内存泄漏）
+        # 5. 全局清理：限制总历史记录数（防止内存泄漏）
         if len(self.trust_history) > self.config.MAX_TRUST_HISTORY_PLAYERS:
             oldest_players = sorted(self.trust_history.keys())[:10]
             for old_player in oldest_players:
                 self.trust_history.pop(old_player, None)
         
         logger.debug(f"Trust score updated: {player} {current_score} -> {new_score} "
-                    f"(base_delta: {delta:+d}, weighted: {weighted_delta:+.1f}, "
-                    f"adjusted: {adjusted_delta:+.1f}, decay: {decay:.2f})")
+                    f"(base_delta: {delta:+d}, weighted: {weighted_delta:+.1f})")
         return new_score
 
 
@@ -262,9 +276,9 @@ class TrustScoreCalculator(BaseAnalyzer):
             speech_score -= 12
             speech_weight += 0.3
         
-        # 归一化发言评分
+        # 归一化发言评分（使用safe_divide）
         if speech_weight > 0:
-            speech_score = speech_score / speech_weight
+            speech_score = safe_divide(speech_score, speech_weight, default=0.0)
         else:
             speech_score = 0.0
         
@@ -287,14 +301,22 @@ class TrustScoreCalculator(BaseAnalyzer):
                 prior_wolf = 1.0
                 prior_good = 2.0
                 
-                smoothed_wolf_rate = (wolf_votes + prior_wolf) / (valid_result_count + prior_wolf + prior_good)
-                smoothed_good_rate = (good_votes + prior_good) / (valid_result_count + prior_wolf + prior_good)
+                smoothed_wolf_rate = safe_divide(
+                    wolf_votes + prior_wolf,
+                    valid_result_count + prior_wolf + prior_good,
+                    default=0.33
+                )
+                smoothed_good_rate = safe_divide(
+                    good_votes + prior_good,
+                    valid_result_count + prior_wolf + prior_good,
+                    default=0.67
+                )
                 
                 net_accuracy = smoothed_wolf_rate - smoothed_good_rate
                 
                 # 使用S型函数(tanh)使评分更平滑
                 vote_score = math.tanh(net_accuracy * 1.5) * 85
-                vote_weight = 1.0 + (valid_result_count / 10.0)
+                vote_weight = 1.0 + safe_divide(valid_result_count, 10.0, default=0.0)
                 
                 logger.debug(f"[TRUST SCORE] {player_name} vote accuracy: wolf={wolf_votes}/{valid_result_count}, "
                            f"good={good_votes}/{valid_result_count}, net={net_accuracy:.2f}, score={vote_score:.1f}")
@@ -315,9 +337,9 @@ class TrustScoreCalculator(BaseAnalyzer):
                 vote_score -= 40
                 vote_weight += 0.6
         
-        # 归一化投票评分
+        # 归一化投票评分（使用safe_divide）
         if vote_weight > 0:
-            vote_score = vote_score / vote_weight
+            vote_score = safe_divide(vote_score, vote_weight, default=0.0)
         else:
             vote_score = 0.0
         
@@ -359,9 +381,9 @@ class TrustScoreCalculator(BaseAnalyzer):
             death_score += 35
             death_weight += 0.7
         
-        # 归一化死亡关联评分
+        # 归一化死亡关联评分（使用safe_divide）
         if death_weight > 0:
-            death_score = death_score / death_weight
+            death_score = safe_divide(death_score, death_weight, default=0.0)
         else:
             death_score = 0.0
         
@@ -381,9 +403,9 @@ class TrustScoreCalculator(BaseAnalyzer):
             role_score -= 20
             role_weight += 0.4
         
-        # 归一化角色行为评分
+        # 归一化角色行为评分（使用safe_divide）
         if role_weight > 0:
-            role_score = role_score / role_weight
+            role_score = safe_divide(role_score, role_weight, default=0.0)
         else:
             role_score = 0.0
         
@@ -532,23 +554,23 @@ class VotingPatternAnalyzer(BaseAnalyzer):
             if vote.get("is_first"):
                 first_vote_count += 1
 
-        # Calculate pattern scores
+        # Calculate pattern scores（使用safe_divide）
         if total_votes > 0:
             # Protect wolf pattern: consistently votes good players
-            if vote_good_count >= 2 and vote_good_count / total_votes >= 0.6:
-                pattern_score["protect_wolf"] = vote_good_count / total_votes
+            if vote_good_count >= 2 and safe_divide(vote_good_count, total_votes, default=0.0) >= 0.6:
+                pattern_score["protect_wolf"] = safe_divide(vote_good_count, total_votes, default=0.0)
             
             # Accurate pattern: consistently votes wolves
-            if vote_wolf_count >= 2 and vote_wolf_count / total_votes >= 0.6:
-                pattern_score["accurate"] = vote_wolf_count / total_votes
+            if vote_wolf_count >= 2 and safe_divide(vote_wolf_count, total_votes, default=0.0) >= 0.6:
+                pattern_score["accurate"] = safe_divide(vote_wolf_count, total_votes, default=0.0)
             
             # Charge pattern: often first to vote
-            if first_vote_count >= 2 and first_vote_count / total_votes >= 0.5:
-                pattern_score["charge"] = first_vote_count / total_votes
+            if first_vote_count >= 2 and safe_divide(first_vote_count, total_votes, default=0.0) >= 0.5:
+                pattern_score["charge"] = safe_divide(first_vote_count, total_votes, default=0.0)
             
             # Abstain pattern: frequently abstains
-            if abstain_count >= 2 and abstain_count / total_votes >= 0.4:
-                pattern_score["abstain"] = abstain_count / total_votes
+            if abstain_count >= 2 and safe_divide(abstain_count, total_votes, default=0.0) >= 0.4:
+                pattern_score["abstain"] = safe_divide(abstain_count, total_votes, default=0.0)
             
             # Swing pattern: no clear pattern, mixed voting
             if max(pattern_score.values()) < 0.5:

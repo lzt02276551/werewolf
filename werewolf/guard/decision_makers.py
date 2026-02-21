@@ -245,9 +245,9 @@ class VoteDecisionStrategy(DecisionStrategy):
         }
         vote_score += pattern_bonus.get(voting_pattern, 0)
         
-        # 注入攻击加成
-        injection_suspects = self.memory.load_variable("injection_suspects") or {}
-        if player in injection_suspects:
+        # 注入攻击加成（安全获取）
+        injection_suspects = self.memory.load_variable("injection_suspects")
+        if injection_suspects and isinstance(injection_suspects, dict) and player in injection_suspects:
             injection_type = injection_suspects[player]
             if injection_type == "system_fake":
                 vote_score += 40
@@ -256,17 +256,19 @@ class VoteDecisionStrategy(DecisionStrategy):
             else:  # benign
                 vote_score -= 15
         
-        # 虚假引用加成
-        false_quotations = self.memory.load_variable("false_quotations") or []
-        for fq in false_quotations:
-            if isinstance(fq, dict) and fq.get("accuser") == player:
-                vote_score += 25
-                break
+        # 虚假引用加成（安全获取）
+        false_quotations = self.memory.load_variable("false_quotations")
+        if false_quotations and isinstance(false_quotations, list):
+            for fq in false_quotations:
+                if isinstance(fq, dict) and fq.get("accuser") == player:
+                    vote_score += 25
+                    break
         
-        # 状态矛盾加成
-        player_status_claims = self.memory.load_variable("player_status_claims") or {}
-        if player in player_status_claims and player_status_claims[player]:
-            vote_score += 35
+        # 状态矛盾加成（安全获取）
+        player_status_claims = self.memory.load_variable("player_status_claims")
+        if player_status_claims and isinstance(player_status_claims, dict):
+            if player in player_status_claims and player_status_claims[player]:
+                vote_score += 35
         
         return vote_score
     
@@ -294,26 +296,28 @@ class VoteDecisionStrategy(DecisionStrategy):
         if voting_pattern in pattern_reasons:
             reasons.append(pattern_reasons[voting_pattern])
         
-        # 注入攻击
-        injection_suspects = self.memory.load_variable("injection_suspects") or {}
-        if player in injection_suspects:
+        # 注入攻击（安全获取）
+        injection_suspects = self.memory.load_variable("injection_suspects")
+        if injection_suspects and isinstance(injection_suspects, dict) and player in injection_suspects:
             injection_type = injection_suspects[player]
             if injection_type == "system_fake":
                 reasons.append("Type 1 injection: Pretending to be Host")
             elif injection_type == "status_fake":
                 reasons.append("Type 2 injection: Faking player status")
         
-        # 虚假引用
-        false_quotations = self.memory.load_variable("false_quotations") or []
-        for fq in false_quotations:
-            if isinstance(fq, dict) and fq.get("accuser") == player:
-                reasons.append("False quotation detected")
-                break
+        # 虚假引用（安全获取）
+        false_quotations = self.memory.load_variable("false_quotations")
+        if false_quotations and isinstance(false_quotations, list):
+            for fq in false_quotations:
+                if isinstance(fq, dict) and fq.get("accuser") == player:
+                    reasons.append("False quotation detected")
+                    break
         
-        # 状态矛盾
-        player_status_claims = self.memory.load_variable("player_status_claims") or {}
-        if player in player_status_claims and player_status_claims[player]:
-            reasons.append("Status contradiction: Claims dead but still speaking")
+        # 状态矛盾（安全获取）
+        player_status_claims = self.memory.load_variable("player_status_claims")
+        if player_status_claims and isinstance(player_status_claims, dict):
+            if player in player_status_claims and player_status_claims[player]:
+                reasons.append("Status contradiction: Claims dead but still speaking")
         
         return "; ".join(reasons) if reasons else "Neutral analysis"
     
