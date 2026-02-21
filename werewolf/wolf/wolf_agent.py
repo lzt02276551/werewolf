@@ -15,7 +15,6 @@ Wolf Agent - 狼人代理人（重构版 - 继承BaseWolfAgent）
 - 狼人内部发言
 """
 
-from typing import Dict, List, Optional, Any
 from agent_build_sdk.model.roles import ROLE_WOLF
 from agent_build_sdk.model.werewolf_model import (
     AgentResp, AgentReq,
