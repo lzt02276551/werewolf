@@ -311,7 +311,7 @@ class HunterAgent(BaseGoodAgent):
         result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
         
         logger.info(f"[HUNTER DISCUSS] Generated speech (length: {len(result)})")
-        return AgentResp(action="speak", content=result)
+        return AgentResp(success=True, result=result, errMsg=None)
     
     def _generate_last_words(self) -> AgentResp:
         """
@@ -333,7 +333,7 @@ class HunterAgent(BaseGoodAgent):
         result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
         
         logger.info(f"[HUNTER LAST WORDS] Generated (length: {len(result)})")
-        return AgentResp(action="speak", content=result)
+        return AgentResp(success=True, result=result, errMsg=None)
     
     def _interact_vote(self, req: AgentReq) -> AgentResp:
         """
@@ -362,7 +362,7 @@ class HunterAgent(BaseGoodAgent):
         target = self._make_vote_decision(choices)
         
         logger.info(f"[HUNTER VOTE] Target: {target}")
-        return AgentResp(action="vote", content=target)
+        return AgentResp(success=True, result=target, errMsg=None)
     
     def _handle_game_result(self, req: AgentReq) -> AgentResp:
         """
@@ -383,4 +383,4 @@ class HunterAgent(BaseGoodAgent):
         # 使用父类的游戏结束处理（自动收集数据和训练ML）
         self._handle_game_end(req)
         
-        return AgentResp(action="", content="")
+        return AgentResp(success=True, result=None, errMsg=None)

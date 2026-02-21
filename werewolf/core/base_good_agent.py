@@ -190,7 +190,7 @@ class BaseGoodAgent(BasicRoleAgent):
                     from incremental_learning import IncrementalLearningSystem
                     from game_end_handler import set_learning_system
                     
-                    retrain_interval = int(os.getenv('ML_RETRAIN_INTERVAL', str(self.config.ML_RETRAIN_INTERVAL)))
+                    retrain_interval = int(os.getenv('ML_TRAIN_INTERVAL', str(self.config.ML_RETRAIN_INTERVAL)))
                     learning_system = IncrementalLearningSystem(self.ml_agent, retrain_interval)
                     set_learning_system(learning_system)
                     

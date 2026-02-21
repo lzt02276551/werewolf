@@ -26,7 +26,7 @@ class IncrementalLearningSystem:
         self.collected_data = []
         
         # 数据存储目录
-        self.data_dir = os.getenv('ML_DATA_DIR', './game_data')
+        self.data_dir = os.getenv('DATA_DIR', './game_data')
         os.makedirs(self.data_dir, exist_ok=True)
         
         # 加载已有数据

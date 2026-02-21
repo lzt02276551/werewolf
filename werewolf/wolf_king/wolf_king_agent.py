@@ -228,11 +228,11 @@ class WolfKingAgent(BaseWolfAgent):
             if status == STATUS_SKILL:
                 return self._handle_kill(req)
             
-            return AgentResp(action="", content="")
+            return AgentResp(success=True, result=None, errMsg=None)
             
         except Exception as e:
             logger.error(f"[PERCEIVE] Error: {e}", exc_info=True)
-            return AgentResp(action="", content="")
+            return AgentResp(success=True, result=None, errMsg=None)
     
     def interact(self, req: AgentReq) -> AgentResp:
         """
@@ -273,11 +273,11 @@ class WolfKingAgent(BaseWolfAgent):
                 return handler(req)
             else:
                 logger.warning(f"[INTERACT] Unknown status: {status}")
-                return AgentResp(action="", content="")
+                return AgentResp(success=True, result=None, errMsg=None)
             
         except Exception as e:
             logger.error(f"[WOLF KING INTERACT] Error in status {status}: {e}", exc_info=True)
-            return AgentResp(action="", content="")
+            return AgentResp(success=True, result=None, errMsg=None)
     
     def _handle_shoot(self, req: AgentReq) -> AgentResp:
         """处理开枪（狼王特有）"""
@@ -286,18 +286,18 @@ class WolfKingAgent(BaseWolfAgent):
         # 检查是否可以开枪
         if not self.memory.load_variable("can_shoot"):
             logger.info("[WOLF KING] Cannot shoot (ability already used)")
-            return AgentResp(action="skill", content="Do Not Shoot")
+            return AgentResp(success=True, result="Do Not Shoot", skillTargetPlayer="Do Not Shoot", errMsg=None)
         
         if not candidates:
             logger.warning("[WOLF KING] No shoot candidates provided")
-            return AgentResp(action="skill", content="Do Not Shoot")
+            return AgentResp(success=True, result="Do Not Shoot", skillTargetPlayer="Do Not Shoot", errMsg=None)
         
         # 决定是否开枪
         target = self._make_shoot_decision(candidates)
         
         if not target:
             logger.info("[WOLF KING] Decided not to shoot")
-            return AgentResp(action="skill", content="Do Not Shoot")
+            return AgentResp(success=True, result="Do Not Shoot", skillTargetPlayer="Do Not Shoot", errMsg=None)
         
         # 验证目标
         target = self._validate_player_name(target, candidates)
@@ -306,7 +306,7 @@ class WolfKingAgent(BaseWolfAgent):
         self.memory.set_variable("can_shoot", False)
         
         logger.info(f"[WOLF KING SHOOT] Final target: {target}")
-        return AgentResp(action="skill", content=target)
+        return AgentResp(success=True, result=target, skillTargetPlayer=target, errMsg=None)
     
     # ==================== 从WolfAgent复制的方法 ====================
     
@@ -319,7 +319,7 @@ class WolfKingAgent(BaseWolfAgent):
         self.memory.set_variable("teammates", teammates)
         
         logger.info(f"[WOLF KING] Game started, I am {my_name}, teammates: {teammates}")
-        return AgentResp(action="", content="")
+        return AgentResp(success=True, result=None, errMsg=None)
     
     def _handle_wolf_speech(self, req: AgentReq) -> AgentResp:
         """处理狼人内部发言"""
@@ -338,7 +338,7 @@ class WolfKingAgent(BaseWolfAgent):
         speech = self._llm_generate(prompt)
         speech = self._truncate_output(speech, self.config.MAX_SPEECH_LENGTH)
         
-        return AgentResp(action="speak", content=speech)
+        return AgentResp(success=True, result=speech, errMsg=None)
     
     def _handle_discussion(self, req: AgentReq) -> AgentResp:
         """处理讨论阶段"""
@@ -367,37 +367,37 @@ class WolfKingAgent(BaseWolfAgent):
         speech = self._llm_generate(prompt)
         speech = self._truncate_output(speech, self.config.MAX_SPEECH_LENGTH)
         
-        return AgentResp(action="speak", content=speech)
+        return AgentResp(success=True, result=speech, errMsg=None)
     
     def _handle_vote(self, req: AgentReq) -> AgentResp:
         """处理投票"""
         candidates = req.choices
         if not candidates:
-            return AgentResp(action="vote", content="No.1")
+            return AgentResp(success=True, result="No.1", errMsg=None)
         
         target = self._make_vote_decision(candidates)
         target = self._validate_player_name(target, candidates)
         
-        return AgentResp(action="vote", content=target)
+        return AgentResp(success=True, result=target, errMsg=None)
     
     def _handle_vote_result(self, req: AgentReq) -> AgentResp:
         """处理投票结果"""
-        return AgentResp(action="", content="")
+        return AgentResp(success=True, result=None, errMsg=None)
     
     def _handle_kill(self, req: AgentReq) -> AgentResp:
         """处理击杀"""
         candidates = req.choices
         if not candidates:
-            return AgentResp(action="skill", content="No.1")
+            return AgentResp(success=True, result="No.1", skillTargetPlayer="No.1", errMsg=None)
         
         target = self._make_kill_decision(candidates)
         target = self._validate_player_name(target, candidates)
         
-        return AgentResp(action="skill", content=target)
+        return AgentResp(success=True, result=target, skillTargetPlayer=target, errMsg=None)
     
     def _handle_sheriff_election(self, req: AgentReq) -> AgentResp:
         """处理警长选举"""
-        return AgentResp(action="sheriff_election", content="Do Not Run")
+        return AgentResp(success=True, result="Do Not Run", errMsg=None)
     
     def _handle_sheriff_speech(self, req: AgentReq) -> AgentResp:
         """处理警长竞选发言"""
@@ -415,13 +415,13 @@ class WolfKingAgent(BaseWolfAgent):
         speech = self._llm_generate(prompt)
         speech = self._truncate_output(speech, self.config.MAX_SPEECH_LENGTH)
         
-        return AgentResp(action="speak", content=speech)
+        return AgentResp(success=True, result=speech, errMsg=None)
     
     def _handle_sheriff_vote(self, req: AgentReq) -> AgentResp:
         """处理警长投票"""
         candidates = req.choices
         if not candidates:
-            return AgentResp(action="vote", content="No.1")
+            return AgentResp(success=True, result="No.1", errMsg=None)
         
         teammates = self.memory.load_variable("teammates") or []
         teammate_candidates = [c for c in candidates if c in teammates]
@@ -434,11 +434,11 @@ class WolfKingAgent(BaseWolfAgent):
             target = min(scores.items(), key=lambda x: x[1])[0]
         
         target = self._validate_player_name(target, candidates)
-        return AgentResp(action="vote", content=target)
+        return AgentResp(success=True, result=target, errMsg=None)
     
     def _handle_sheriff_speech_order(self, req: AgentReq) -> AgentResp:
         """处理警长发言顺序选择"""
-        return AgentResp(action="speech_order", content="Clockwise")
+        return AgentResp(success=True, result="Clockwise", errMsg=None)
     
     def _handle_sheriff_pk(self, req: AgentReq) -> AgentResp:
         """处理警长PK发言"""
@@ -456,7 +456,7 @@ class WolfKingAgent(BaseWolfAgent):
         speech = self._llm_generate(prompt)
         speech = self._truncate_output(speech, self.config.MAX_SPEECH_LENGTH)
         
-        return AgentResp(action="speak", content=speech)
+        return AgentResp(success=True, result=speech, errMsg=None)
     
     def _handle_result(self, req: AgentReq) -> AgentResp:
         """处理游戏结果"""
@@ -465,4 +465,4 @@ class WolfKingAgent(BaseWolfAgent):
         self.memory.set_variable("game_result", result)
         
         logger.info(f"[WOLF KING] Game ended: {result}")
-        return AgentResp(action="", content="")
+        return AgentResp(success=True, result=None, errMsg=None)
