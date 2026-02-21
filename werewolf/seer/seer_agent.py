@@ -135,10 +135,10 @@ class SeerAgent(BaseGoodAgent):
         """
         # 预言家特有事件：技能结果（验人结果）
         if req.status == STATUS_SKILL_RESULT:
-            self._handle_skill_result(req)
+            return self._handle_skill_result(req)
         else:
             # 其他事件使用父类处理
-            super().perceive(req)
+            return super().perceive(req)
     
     def _handle_skill_result(self, req):
         """处理技能结果（检查结果）"""
@@ -213,7 +213,9 @@ class SeerAgent(BaseGoodAgent):
         elif req.status == STATUS_SHERIFF_PK:
             return self._interact_sheriff_pk(req)
         else:
-            raise NotImplementedError(f"Interact status {req.status} not implemented")
+            # 未知状态，返回默认响应
+            logger.warning(f"[SEER INTERACT] Unknown status: {req.status}, returning default response")
+            return AgentResp(success=True, result="", errMsg=None)
 
     
     def _interact_discuss(self, req) -> AgentResp:

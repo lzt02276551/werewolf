@@ -55,14 +55,8 @@ class Config:
             print(f"Warning: Invalid {name} weight type: {e}, using 0.0")
             return 0.0
         
-        if not (Config.MIN_SINGLE_WEIGHT <= weight <= Config.MAX_SINGLE_WEIGHT):
-            print(
-                f"Warning: {name} weight {weight} out of range "
-                f"[{Config.MIN_SINGLE_WEIGHT}, {Config.MAX_SINGLE_WEIGHT}], "
-                f"clamping"
-            )
-            weight = max(Config.MIN_SINGLE_WEIGHT, min(Config.MAX_SINGLE_WEIGHT, weight))
-        
+        # 不要在这里clamp，让归一化处理超出范围的值
+        # 只验证类型，不限制范围
         return weight
     
     @staticmethod
@@ -78,6 +72,8 @@ class Config:
         Returns:
             (rf, gb, xgb) 归一化后的权重元组
         """
+        from werewolf.optimization.utils.safe_math import safe_divide
+        
         total = rf + gb + xgb
         
         # 检查总和是否有效
@@ -87,10 +83,10 @@ class Config:
             )
             return (0.4, 0.4, 0.2)
         
-        # 归一化
-        rf_norm = rf / total
-        gb_norm = gb / total
-        xgb_norm = xgb / total
+        # 归一化（使用safe_divide防止除零）
+        rf_norm = safe_divide(rf, total, default=0.4)
+        gb_norm = safe_divide(gb, total, default=0.4)
+        xgb_norm = safe_divide(xgb, total, default=0.2)
         
         # 验证归一化结果
         final_sum = rf_norm + gb_norm + xgb_norm

@@ -37,6 +37,30 @@ class GuardConfig(BaseGoodConfig):
     KILL_PROB_STRONG_VILLAGER: float = 0.40
     KILL_PROB_HUNTER: float = 0.10
     
+    # ==================== 投票决策配置 ====================
+    VOTE_BONUS_PROTECTING_WOLVES: int = 30
+    VOTE_BONUS_CHARGING: int = 20
+    VOTE_BONUS_SWAYING: int = 15
+    VOTE_PENALTY_ACCURATE: int = -25
+    VOTE_BONUS_SYSTEM_FAKE: int = 40
+    VOTE_BONUS_STATUS_FAKE: int = 30
+    VOTE_PENALTY_BENIGN: int = -15
+    VOTE_BONUS_FALSE_QUOTATION: int = 25
+    VOTE_BONUS_STATUS_CONTRADICTION: int = 35
+    
+    # 信任分数阈值
+    TRUST_VERY_LOW: int = 20
+    TRUST_LOW: int = 40
+    
+    # 狼人概率阈值
+    WOLF_PROB_VERY_HIGH: float = 0.85
+    WOLF_PROB_HIGH: float = 0.70
+    
+    # 投票分析配置
+    VOTING_MIN_SAMPLES: int = 3
+    VOTING_ACCURACY_HIGH: float = 0.67
+    VOTING_ACCURACY_LOW: float = 0.33
+    
     # 角色特定配置
     role_specific: Dict[str, Any] = field(default_factory=lambda: {
         "first_night_strategy": "empty_guard",

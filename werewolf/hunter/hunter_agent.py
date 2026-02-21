@@ -266,8 +266,9 @@ class HunterAgent(BaseGoodAgent):
         elif req.status == STATUS_RESULT:
             return self._handle_game_result(req)
         else:
-            # 其他状态使用父类的默认处理
-            return super().interact(req)
+            # 未知状态，返回默认响应
+            logger.warning(f"[HUNTER INTERACT] Unknown status: {req.status}, returning default response")
+            return AgentResp(success=True, result="", errMsg=None)
     
     def _interact_discuss(self, req: AgentReq) -> AgentResp:
         """

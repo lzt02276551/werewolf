@@ -63,7 +63,11 @@ class VoteDecisionMaker(BaseDecisionMaker):
         Returns:
             (目标, 理由, 所有候选人分数)
         """
-        # 过滤有效候选人
+        # 过滤有效候选人（增强类型验证）
+        if not isinstance(candidates, list):
+            logger.error(f"[VOTE] Invalid candidates type: {type(candidates)}, expected list")
+            return (my_name, "Invalid candidates type", {})
+        
         valid_candidates = [c for c in candidates if c != my_name and self.validator.validate_player_name(c)]
         
         if not valid_candidates:
@@ -115,12 +119,26 @@ class VoteDecisionMaker(BaseDecisionMaker):
         wolf_prob = self.wolf_prob_calculator.calculate(player, game_phase)
         wolf_modifier = wolf_prob * 50  # 狼人概率贡献0-50分
         
-        # 注入攻击和虚假引用
+        # 注入攻击和虚假引用（增强类型安全）
         injection_attempts = self.memory_dao.get_injection_attempts()
         false_quotations = self.memory_dao.get_false_quotations()
         
-        injection_count = sum(1 for att in injection_attempts if att.get("player") == player)
-        false_quote_count = sum(1 for fq in false_quotations if fq.get("accuser") == player)
+        if not isinstance(injection_attempts, list):
+            logger.warning(f"injection_attempts is not a list: {type(injection_attempts)}")
+            injection_attempts = []
+        
+        if not isinstance(false_quotations, list):
+            logger.warning(f"false_quotations is not a list: {type(false_quotations)}")
+            false_quotations = []
+        
+        injection_count = sum(
+            1 for att in injection_attempts 
+            if isinstance(att, dict) and att.get("player") == player
+        )
+        false_quote_count = sum(
+            1 for fq in false_quotations 
+            if isinstance(fq, dict) and fq.get("accuser") == player
+        )
         
         injection_modifier = min(50, injection_count * 30)
         false_quote_modifier = min(40, false_quote_count * 25)
@@ -219,10 +237,19 @@ class VoteDecisionMaker(BaseDecisionMaker):
         injection_attempts = self.memory_dao.get_injection_attempts()
         false_quotations = self.memory_dao.get_false_quotations()
         
-        if any(att.get("player") == target for att in injection_attempts):
+        # 类型安全检查
+        if not isinstance(injection_attempts, list):
+            logger.warning(f"injection_attempts is not a list: {type(injection_attempts)}")
+            injection_attempts = []
+        
+        if not isinstance(false_quotations, list):
+            logger.warning(f"false_quotations is not a list: {type(false_quotations)}")
+            false_quotations = []
+        
+        if any(isinstance(att, dict) and att.get("player") == target for att in injection_attempts):
             reasons.append("injection attack")
         
-        if any(fq.get("accuser") == target for fq in false_quotations):
+        if any(isinstance(fq, dict) and fq.get("accuser") == target for fq in false_quotations):
             reasons.append("false quotation")
         
         return ", ".join(reasons)
@@ -268,8 +295,16 @@ class ShootDecisionMaker(BaseDecisionMaker):
         Returns:
             (目标, 理由, 所有候选人分数)
         """
-        # 过滤有效候选人
+        # 过滤有效候选人（增强类型验证）
+        if not isinstance(candidates, list):
+            logger.error(f"[SHOOT] Invalid candidates type: {type(candidates)}, expected list")
+            return ("Do Not Shoot", "Invalid candidates type", {})
+        
         dead_players = self.memory_dao.get_dead_players()
+        if not isinstance(dead_players, set):
+            logger.warning(f"[SHOOT] dead_players is not a set, converting: {type(dead_players)}")
+            dead_players = set(dead_players) if dead_players else set()
+        
         valid_candidates = [
             c for c in candidates 
             if c != my_name and c not in dead_players and self.validator.validate_player_name(c)
@@ -314,11 +349,14 @@ class ShootDecisionMaker(BaseDecisionMaker):
         score = sorted_candidates[0][1]
         confidence = confidence_scores[target]
         
-        # 置信度和分数阈值检查
-        if confidence < 0.4 and score < 40:
+        # 置信度和分数阈值检查（使用配置常量）
+        min_confidence = self.config.shoot_confidence_threshold  # 0.4
+        min_score = self.config.vote_score_threshold  # 35.0
+        
+        if confidence < min_confidence and score < min_score:
             return ("Do Not Shoot", f"Low confidence ({confidence:.2%}) and score ({score:.1f})", shoot_scores)
         
-        if score < 35:
+        if score < min_score:
             return ("Do Not Shoot", f"All scores below threshold (highest: {score:.1f})", shoot_scores)
         
         # 生成理由
@@ -354,9 +392,18 @@ class ShootDecisionMaker(BaseDecisionMaker):
         injection_attempts = self.memory_dao.get_injection_attempts()
         false_quotations = self.memory_dao.get_false_quotations()
         
+        # 类型安全检查
+        if not isinstance(injection_attempts, list):
+            logger.warning(f"injection_attempts is not a list: {type(injection_attempts)}")
+            injection_attempts = []
+        
+        if not isinstance(false_quotations, list):
+            logger.warning(f"false_quotations is not a list: {type(false_quotations)}")
+            false_quotations = []
+        
         has_strong_evidence = (
-            any(att.get("player") == player for att in injection_attempts) or
-            any(fq.get("accuser") == player for fq in false_quotations)
+            any(isinstance(att, dict) and att.get("player") == player for att in injection_attempts) or
+            any(isinstance(fq, dict) and fq.get("accuser") == player for fq in false_quotations)
         )
         
         if has_strong_evidence:
@@ -421,10 +468,19 @@ class ShootDecisionMaker(BaseDecisionMaker):
         injection_attempts = self.memory_dao.get_injection_attempts()
         false_quotations = self.memory_dao.get_false_quotations()
         
-        if any(att.get("player") == target for att in injection_attempts):
+        # 类型安全检查
+        if not isinstance(injection_attempts, list):
+            logger.warning(f"injection_attempts is not a list: {type(injection_attempts)}")
+            injection_attempts = []
+        
+        if not isinstance(false_quotations, list):
+            logger.warning(f"false_quotations is not a list: {type(false_quotations)}")
+            false_quotations = []
+        
+        if any(isinstance(att, dict) and att.get("player") == target for att in injection_attempts):
             reasons.append("注入攻击")
         
-        if any(fq.get("accuser") == target for fq in false_quotations):
+        if any(isinstance(fq, dict) and fq.get("accuser") == target for fq in false_quotations):
             reasons.append("虚假引用")
         
         sheriff = self.memory_dao.get_sheriff()
@@ -529,7 +585,12 @@ class SheriffVoteDecisionMaker(BaseDecisionMaker):
             # 发言质量（20%权重）
             speech_history = self.memory_dao.get_speech_history()
             if candidate in speech_history and len(speech_history[candidate]) > 0:
-                avg_length = sum(len(s) for s in speech_history[candidate]) / len(speech_history[candidate])
+                from werewolf.optimization.utils.safe_math import safe_divide
+                avg_length = safe_divide(
+                    sum(len(s) for s in speech_history[candidate]), 
+                    len(speech_history[candidate]), 
+                    default=100
+                )
                 if avg_length > 200:
                     score += 20 * 0.2
                 elif avg_length > 100:
@@ -544,8 +605,9 @@ class SheriffVoteDecisionMaker(BaseDecisionMaker):
                 if isinstance(results, list) and len(results) >= 2:
                     valid_results = [r for r in results if self.validator.validate_voting_record(r)]
                     if valid_results:
+                        from werewolf.optimization.utils.safe_math import safe_divide
                         wolf_votes = sum(1 for _, was_wolf in valid_results if was_wolf)
-                        accuracy_rate = wolf_votes / len(valid_results)
+                        accuracy_rate = safe_divide(wolf_votes, len(valid_results), default=0.5)
                         
                         if accuracy_rate >= 0.7:
                             score += 20 * 0.2

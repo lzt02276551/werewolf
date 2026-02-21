@@ -404,15 +404,20 @@ class DecisionEngine:
 class GuardDecisionMaker:
     """企业级守卫决策器"""
     
-    def __init__(self, config, memory, trust_manager):
+    def __init__(self, config):
         self.config = config
-        self.memory = memory
-        self.trust_manager = trust_manager
+        self.memory = None
+        self.trust_manager = None
         
         # 延迟初始化分析器（避免循环依赖）
         self._role_estimator = None
         self._wolf_kill_predictor = None
         self._guard_priority_calculator = None
+    
+    def set_dependencies(self, memory, trust_manager):
+        """设置依赖（依赖注入）"""
+        self.memory = memory
+        self.trust_manager = trust_manager
     
     def set_analyzers(self, role_estimator, wolf_kill_predictor, guard_priority_calculator):
         """设置分析器（依赖注入）"""
@@ -420,33 +425,38 @@ class GuardDecisionMaker:
         self._wolf_kill_predictor = wolf_kill_predictor
         self._guard_priority_calculator = guard_priority_calculator
     
-    def decide(self, candidates: List[str], my_name: str, night_count: int, last_guarded: str) -> Tuple[str, str]:
+    def decide(self, candidates: List[str], context: Dict[str, Any]) -> Tuple[str, str, int]:
         """
         守卫决策（企业级版本）
         
         Args:
             candidates: 候选人列表
-            my_name: 自己的名字
-            night_count: 夜晚计数
-            last_guarded: 上次守卫的玩家
+            context: 决策上下文（包含my_name, night_count, last_guarded等）
             
         Returns:
-            (目标, 原因)
+            (目标, 原因, 置信度)
         """
+        my_name = context.get('my_name', '')
+        night_count = context.get('night_count', 0)
+        last_guarded = context.get('last_guarded', '')
+        
         # 首夜空守
         if night_count == 1:
-            return "", "First night empty guard - prevent milk penetration"
+            return "", "First night empty guard - prevent milk penetration", 100
         
         # 过滤候选人
-        valid_candidates = [c for c in candidates if c != my_name and c != last_guarded]
+        valid_candidates = [c for c in candidates if c and c != my_name and c != last_guarded]
         if not valid_candidates:
-            return "", "No valid candidates (cannot guard self or repeat)"
+            return "", "No valid candidates (cannot guard self or repeat)", 0
         
-        # 如果分析器未设置，使用简化逻辑
-        if not self._guard_priority_calculator or not self._wolf_kill_predictor:
-            best_target = max(valid_candidates, key=lambda p: self.trust_manager.get_score(p))
-            trust_score = self.trust_manager.get_score(best_target)
-            return best_target, f"Guard highest trust player (trust: {trust_score:.1f})"
+        # 如果依赖未设置，使用简化逻辑
+        if not self.trust_manager or not self._guard_priority_calculator or not self._wolf_kill_predictor:
+            if self.trust_manager:
+                best_target = max(valid_candidates, key=lambda p: self.trust_manager.get_score(p))
+                trust_score = self.trust_manager.get_score(best_target)
+                return best_target, f"Guard highest trust player (trust: {trust_score:.1f})", 70
+            else:
+                return valid_candidates[0], "Fallback guard (no trust manager)", 50
         
         # 企业级决策逻辑
         choices_with_priority = []
@@ -475,7 +485,7 @@ class GuardDecisionMaker:
                 continue
         
         if not choices_with_priority:
-            return "", "No valid targets after filtering (empty guard)"
+            return "", "No valid targets after filtering (empty guard)", 100
         
         # 排序并选择
         choices_with_priority.sort(key=lambda x: x[1], reverse=True)
@@ -494,47 +504,66 @@ class GuardDecisionMaker:
         else:
             reason = f"Priority score: {priority:.1f}"
         
-        return target, reason
+        # 计算置信度
+        confidence = 70
+        if priority > 90:
+            confidence = 90
+        elif priority > 80:
+            confidence = 85
+        elif priority > 70:
+            confidence = 80
+        
+        return target, reason, confidence
 
 
 class VoteDecisionMaker:
     """企业级投票决策器"""
     
-    def __init__(self, config, memory, trust_manager):
+    def __init__(self, config):
         self.config = config
-        self.memory = memory
-        self.trust_manager = trust_manager
+        self.memory = None
+        self.trust_manager = None
         
         # 延迟初始化分析器（避免循环依赖）
         self._wolf_analyzer = None
         self._voting_analyzer = None
+    
+    def set_dependencies(self, memory, trust_manager):
+        """设置依赖（依赖注入）"""
+        self.memory = memory
+        self.trust_manager = trust_manager
     
     def set_analyzers(self, wolf_analyzer, voting_analyzer):
         """设置分析器（依赖注入）"""
         self._wolf_analyzer = wolf_analyzer
         self._voting_analyzer = voting_analyzer
     
-    def decide(self, candidates: List[str], my_name: str) -> Tuple[str, str]:
+    def decide(self, candidates: List[str], context: Dict[str, Any]) -> Tuple[str, str, int]:
         """
         投票决策（企业级版本）
         
         Args:
             candidates: 候选人列表
-            my_name: 自己的名字
+            context: 决策上下文（包含my_name等）
             
         Returns:
-            (目标, 原因)
+            (目标, 原因, 置信度)
         """
-        # 过滤候选人
-        valid_candidates = [c for c in candidates if c != my_name]
-        if not valid_candidates:
-            return candidates[0] if candidates else "", "Fallback vote"
+        my_name = context.get('my_name', '')
         
-        # 如果分析器未设置，使用简化逻辑
-        if not self._wolf_analyzer or not self._voting_analyzer:
-            worst_target = min(valid_candidates, key=lambda p: self.trust_manager.get_score(p))
-            trust_score = self.trust_manager.get_score(worst_target)
-            return worst_target, f"Vote lowest trust player (trust: {trust_score:.1f})"
+        # 过滤候选人
+        valid_candidates = [c for c in candidates if c and c != my_name]
+        if not valid_candidates:
+            return candidates[0] if candidates else "", "Fallback vote", 0
+        
+        # 如果依赖未设置，使用简化逻辑
+        if not self.trust_manager or not self._wolf_analyzer or not self._voting_analyzer:
+            if self.trust_manager:
+                worst_target = min(valid_candidates, key=lambda p: self.trust_manager.get_score(p))
+                trust_score = self.trust_manager.get_score(worst_target)
+                return worst_target, f"Vote lowest trust player (trust: {trust_score:.1f})", 70
+            else:
+                return valid_candidates[0], "Fallback vote (no trust manager)", 50
         
         # 企业级决策逻辑
         choices_with_analysis = []
@@ -559,15 +588,24 @@ class VoteDecisionMaker:
                 choices_with_analysis.append((candidate, 0.5, 50, 50, "Analysis failed"))
         
         if not choices_with_analysis:
-            return valid_candidates[0], "No valid targets"
+            return valid_candidates[0], "No valid targets", 0
         
         # 排序并选择
         choices_with_analysis.sort(key=lambda x: x[3], reverse=True)
         target, wolf_prob, trust_score, vote_score, reason = choices_with_analysis[0]
         
-        logger.info(f"[VoteDecision] Selected {target} (wolf_prob: {wolf_prob:.2f}, vote_score: {vote_score:.1f})")
+        # 计算置信度
+        confidence = 70
+        if vote_score > 140:
+            confidence = 90
+        elif vote_score > 130:
+            confidence = 85
+        elif vote_score > 120:
+            confidence = 80
         
-        return target, reason
+        logger.info(f"[VoteDecision] Selected {target} (wolf_prob: {wolf_prob:.2f}, vote_score: {vote_score:.1f}, confidence: {confidence})")
+        
+        return target, reason, confidence
     
     def _calculate_vote_score(self, player: str, wolf_prob: float, trust_score: float, voting_pattern: str) -> float:
         """计算投票分数"""

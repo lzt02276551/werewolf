@@ -864,4 +864,6 @@ class VillagerAgent(BaseGoodAgent):
             return AgentResp(success=True, result=result, errMsg=None)
         
         else:
-            raise NotImplementedError
+            # 未知状态，返回默认响应
+            logger.warning(f"[VILLAGER INTERACT] Unknown status: {req.status}, returning default response")
+            return AgentResp(success=True, result="", errMsg=None)

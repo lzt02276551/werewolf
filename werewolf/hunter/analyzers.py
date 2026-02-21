@@ -115,16 +115,34 @@ class MemoryDAO(BaseMemoryDAO):
         self.set("speech_history", history)
     
     def get_injection_attempts(self) -> List[Dict[str, Any]]:
-        """获取注入尝试记录"""
-        return self.get("injection_attempts", [])
+        """获取注入尝试记录（确保返回list类型）"""
+        attempts = self.get("injection_attempts", [])
+        # 类型安全：确保返回list
+        if not isinstance(attempts, list):
+            logger.warning(f"injection_attempts is not a list, converting from {type(attempts)}")
+            attempts = list(attempts) if attempts else []
+            self.set("injection_attempts", attempts)
+        return attempts
     
     def get_false_quotations(self) -> List[Dict[str, Any]]:
-        """获取虚假引用记录"""
-        return self.get("false_quotations", [])
+        """获取虚假引用记录（确保返回list类型）"""
+        quotations = self.get("false_quotations", [])
+        # 类型安全：确保返回list
+        if not isinstance(quotations, list):
+            logger.warning(f"false_quotations is not a list, converting from {type(quotations)}")
+            quotations = list(quotations) if quotations else []
+            self.set("false_quotations", quotations)
+        return quotations
     
     def get_dead_players(self) -> set:
-        """获取死亡玩家集合"""
-        return self.get("dead_players", set())
+        """获取死亡玩家集合（确保返回set类型）"""
+        dead_players = self.get("dead_players", set())
+        # 类型安全：确保返回set
+        if not isinstance(dead_players, set):
+            logger.warning(f"dead_players is not a set, converting from {type(dead_players)}")
+            dead_players = set(dead_players) if dead_players else set()
+            self.set("dead_players", dead_players)
+        return dead_players
     
     def get_sheriff(self) -> Optional[str]:
         """获取当前警长"""
@@ -205,8 +223,9 @@ class TrustScoreAnalyzer(BaseAnalyzer):
             
             # 历史一致性检查
             if len(trust_history[player_name]) >= 3:
+                from werewolf.optimization.utils.safe_math import safe_divide
                 recent_changes = trust_history[player_name][-3:]
-                avg_trend = sum(recent_changes) / len(recent_changes)
+                avg_trend = safe_divide(sum(recent_changes), len(recent_changes), default=0)
                 
                 if (avg_trend > 0 and evidence_impact < 0) or (avg_trend < 0 and evidence_impact > 0):
                     evidence_impact *= 0.5
@@ -290,9 +309,10 @@ class VotingPatternAnalyzer(BaseAnalyzer):
         if len(valid_results) < 2:
             return 0.0
         
-        # 计算准确率
+        # 计算准确率（使用safe_divide防止除零）
+        from werewolf.optimization.utils.safe_math import safe_divide
         wolf_votes = sum(1 for _, was_wolf in valid_results if was_wolf)
-        accuracy_rate = wolf_votes / len(valid_results)
+        accuracy_rate = safe_divide(wolf_votes, len(valid_results), default=0.5)
         
         # 映射到修正值
         if accuracy_rate >= 0.7:
@@ -344,8 +364,9 @@ class VotingPatternAnalyzer(BaseAnalyzer):
         # 计算并记录准确率
         valid_history = [r for r in voting_results[voter] if self.validator.validate_voting_record(r)]
         if len(valid_history) >= 2:
+            from werewolf.optimization.utils.safe_math import safe_divide
             wolf_votes = sum(1 for _, is_wolf in valid_history if is_wolf)
-            accuracy_rate = wolf_votes / len(valid_history)
+            accuracy_rate = safe_divide(wolf_votes, len(valid_history), default=0.5)
             logger.info(f"[VOTING ACCURACY] {voter}: {wolf_votes}/{len(valid_history)} = {accuracy_rate:.0%}")
 
 
@@ -397,8 +418,9 @@ class SpeechQualityAnalyzer(BaseAnalyzer):
         elif speech_count >= 3:
             modifier -= 0.03
         
-        # Speech length analysis
-        avg_length = sum(len(s) for s in speeches) / len(speeches)
+        # Speech length analysis（使用safe_divide防止除零）
+        from werewolf.optimization.utils.safe_math import safe_divide
+        avg_length = safe_divide(sum(len(s) for s in speeches), len(speeches), default=100)
         if avg_length < 50:
             modifier += 0.20  # Too short
         elif avg_length > 300:
@@ -406,15 +428,17 @@ class SpeechQualityAnalyzer(BaseAnalyzer):
         elif avg_length > 150:
             modifier -= 0.05
         
-        # Speech consistency analysis
+        # Speech consistency analysis（使用safe_divide防止除零）
         if len(speeches) >= 3:
+            from werewolf.optimization.utils.safe_math import safe_divide
             lengths = [len(s) for s in speeches]
-            avg = sum(lengths) / len(lengths)
-            variance = sum((l - avg) ** 2 for l in lengths) / len(lengths)
+            avg = safe_divide(sum(lengths), len(lengths), default=100)
+            variance = safe_divide(sum((l - avg) ** 2 for l in lengths), len(lengths), default=0)
             std_dev = variance ** 0.5
             
             if avg > 0:
-                cv = std_dev / avg  # Coefficient of variation
+                from werewolf.optimization.utils.safe_math import safe_divide
+                cv = safe_divide(std_dev, avg, default=0)  # Coefficient of variation
                 if cv > 0.5:
                     modifier += 0.10  # Inconsistent
         
@@ -495,12 +519,13 @@ class ThreatLevelAnalyzer(BaseAnalyzer):
             
             base_threat = 0.15 if vote_count >= 4 else (0.08 if vote_count >= 2 else -0.08)
             
-            # 投票准确性加成
+            # 投票准确性加成（使用safe_divide防止除零）
             if isinstance(results, list) and len(results) >= 2:
+                from werewolf.optimization.utils.safe_math import safe_divide
                 valid_results = [r for r in results if self.validator.validate_voting_record(r)]
                 if valid_results:
                     wolf_votes = sum(1 for _, was_wolf in valid_results if was_wolf)
-                    accuracy = wolf_votes / len(valid_results)
+                    accuracy = safe_divide(wolf_votes, len(valid_results), default=0.5)
                     
                     if accuracy >= 0.7:
                         base_threat *= 1.5  # 准确的投票者威胁更大
@@ -645,13 +670,27 @@ class WolfProbabilityCalculator:
         return 0.5
     
     def _get_injection_component(self, player_name: str) -> float:
-        """获取注入攻击组件"""
+        """获取注入攻击组件（增强类型安全）"""
         injection_attempts = self.memory_dao.get_injection_attempts()
-        injection_count = sum(1 for att in injection_attempts if att.get("player") == player_name)
+        if not isinstance(injection_attempts, list):
+            logger.warning(f"injection_attempts is not a list: {type(injection_attempts)}")
+            return 0.0
+        
+        injection_count = sum(
+            1 for att in injection_attempts 
+            if isinstance(att, dict) and att.get("player") == player_name
+        )
         return min(1.0, injection_count * 0.5)
     
     def _get_false_quote_component(self, player_name: str) -> float:
-        """获取虚假引用组件"""
+        """获取虚假引用组件（增强类型安全）"""
         false_quotations = self.memory_dao.get_false_quotations()
-        false_quote_count = sum(1 for fq in false_quotations if fq.get("accuser") == player_name)
+        if not isinstance(false_quotations, list):
+            logger.warning(f"false_quotations is not a list: {type(false_quotations)}")
+            return 0.0
+        
+        false_quote_count = sum(
+            1 for fq in false_quotations 
+            if isinstance(fq, dict) and fq.get("accuser") == player_name
+        )
         return min(1.0, false_quote_count * 0.4)

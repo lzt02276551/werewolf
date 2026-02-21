@@ -130,7 +130,7 @@ class WitchAgent(BaseGoodAgent):
             return self._handle_skill(req)
         else:
             # 其他事件使用父类处理
-            super().perceive(req)
+            return super().perceive(req)
     
     def _handle_skill(self, req: AgentReq) -> AgentResp:
         """
@@ -164,10 +164,22 @@ class WitchAgent(BaseGoodAgent):
             self.memory_dao.increment_night()
             current_night = self.memory_dao.get_current_night()
             
-            # 从历史中提取被杀玩家
-            victim = self._extract_killed_player(req.history)
+            # 从请求中提取被杀玩家
+            victim = self._extract_killed_player(req)
             
-            # 解药决策
+            # 检查是否是自己被杀
+            my_name = self.memory_dao.get_my_name()
+            if victim == my_name:
+                logger.info(f"[SKILL] Night {current_night}: Witch was killed, checking self-save strategy")
+                # 根据配置决定是否自救
+                if self._should_self_save(current_night):
+                    if self.memory_dao.get_has_antidote():
+                        self.memory_dao.set_has_antidote(False)
+                        self.memory_dao.add_saved_player(victim)
+                        logger.info(f"[SKILL] Night {current_night}: SELF-SAVE")
+                        return "antidote", victim
+            
+            # 解药决策（救其他人）
             antidote_action = self._decide_antidote_action(victim, current_night)
             if antidote_action:
                 return antidote_action
@@ -253,48 +265,96 @@ class WitchAgent(BaseGoodAgent):
         
         return None
     
-    def _extract_killed_player(self, history: List[str]) -> Optional[str]:
+    def _extract_killed_player(self, req: AgentReq) -> Optional[str]:
         """
-        从历史中提取被杀玩家
+        从请求中提取被杀玩家
         
         Args:
-            history: 历史消息列表
+            req: 请求对象
             
         Returns:
             被杀玩家名称，未找到返回None
         """
         try:
-            for msg in reversed(history[-10:]):
+            # 优先从message中提取
+            if req.message:
+                msg = str(req.message)
                 if "was killed" in msg or "died" in msg or "被杀" in msg:
                     match = re.search(r'No\.(\d+)', msg)
                     if match:
-                        return f"No.{match.group(1)}"
+                        victim = f"No.{match.group(1)}"
+                        logger.info(f"[EXTRACT] Found victim from message: {victim}")
+                        return victim
+            
+            # 从历史中提取
+            if req.history:
+                for msg in reversed(req.history[-10:]):
+                    if "was killed" in msg or "died" in msg or "被杀" in msg:
+                        match = re.search(r'No\.(\d+)', msg)
+                        if match:
+                            victim = f"No.{match.group(1)}"
+                            logger.info(f"[EXTRACT] Found victim from history: {victim}")
+                            return victim
+            
+            logger.warning("[EXTRACT] No victim found in message or history")
             return None
+            
         except Exception as e:
             logger.error(f"Error extracting killed player: {e}")
             return None
     
+    def _should_self_save(self, current_night: int) -> bool:
+        """
+        决定是否自救
+        
+        Args:
+            current_night: 当前夜晚数
+            
+        Returns:
+            是否应该自救
+        """
+        # 第一夜通常自救
+        if current_night == 1:
+            return True
+        
+        # 后期根据局势判断
+        # 可以添加更复杂的逻辑，例如：
+        # - 如果好人阵营处于劣势，优先自救
+        # - 如果已经确定多个狼人，可以不自救
+        wolves_eliminated = self.memory_dao.get_wolves_eliminated()
+        good_players_lost = self.memory_dao.get_good_players_lost()
+        
+        # 简单策略：如果好人损失较多，自救
+        if good_players_lost > wolves_eliminated + 1:
+            return True
+        
+        return False
+    
     # ==================== 交互方法（使用父类方法）====================
     
     def interact(self, req: AgentReq) -> AgentResp:
-        """
-        处理交互请求（使用父类方法简化）
-        
-        Args:
-            req: 交互请求
-            
-        Returns:
-            AgentResp: 交互响应
-        """
-        logger.info(f"[WITCH INTERACT] Status: {req.status}")
-        
-        if req.status == STATUS_DISCUSS:
-            return self._interact_discuss(req)
-        elif req.status == STATUS_VOTE:
-            return self._interact_vote(req)
-        else:
-            # 其他状态使用父类的默认处理
-            return super().interact(req)
+            """
+            处理交互请求（使用父类方法简化）
+
+            Args:
+                req: 交互请求
+
+            Returns:
+                AgentResp: 交互响应
+            """
+            logger.info(f"[WITCH INTERACT] Status: {req.status}")
+
+            if req.status == STATUS_SKILL:
+                return self._handle_skill(req)
+            elif req.status == STATUS_DISCUSS:
+                return self._interact_discuss(req)
+            elif req.status == STATUS_VOTE:
+                return self._interact_vote(req)
+            else:
+                # 未知状态，返回默认响应
+                logger.warning(f"[WITCH INTERACT] Unknown status: {req.status}, returning default response")
+                return AgentResp(success=True, result="", errMsg=None)
+
     
     def _interact_discuss(self, req: AgentReq) -> AgentResp:
         """

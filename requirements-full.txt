@@ -1,0 +1,55 @@
+# ==================== 狼人杀AI系统 - 完整版依赖（ML增强版） ====================
+# 包含所有功能：基础游戏 + ML增强 + 高级特性
+
+# -------------------- 基础框架依赖（必需） --------------------
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+openai>=1.0.0
+werewolf-agent-build-sdk==0.0.10
+
+# -------------------- ML核心依赖（必需） --------------------
+numpy>=1.24.0,<2.0.0
+scikit-learn==1.3.2
+joblib>=1.3.0,<1.5.0
+
+# -------------------- ML增强依赖（完整版） --------------------
+xgboost>=1.7.0
+scipy>=1.10.0
+
+# -------------------- 配置管理依赖（必需） --------------------
+pyyaml>=6.0
+pydantic>=2.0.0
+
+# ==================== 说明 ====================
+# 完整版特点：
+# ✓ 基础游戏逻辑（7种角色）
+# ✓ LLM驱动的AI玩家
+# ✓ sklearn-based ML增强（异常检测）
+# ✓ XGBoost集成学习
+# ✓ 增强贝叶斯推理
+# ✓ 高级特征提取
+# ✓ 集成检测器（RandomForest + GradientBoosting + XGBoost）
+
+# 资源需求：
+# - CPU: 4核（推荐）
+# - 内存: 4GB（推荐）
+# - 磁盘: 3GB
+# - 安装大小: 约300MB
+
+# 环境变量配置：
+# ENABLE_GOLDEN_PATH=false         # 禁用Golden Path（可选）
+# ML_AUTO_TRAIN=true               # 启用ML训练
+# ML_TRAIN_INTERVAL=10             # 训练间隔（游戏场数）
+# ML_MIN_SAMPLES=50                # 最小训练样本数
+# ML_RF_WEIGHT=0.4                 # RandomForest权重
+# ML_GB_WEIGHT=0.4                 # GradientBoosting权重
+# ML_XGB_WEIGHT=0.2                # XGBoost权重
+
+# 适用场景：
+# - 开发环境
+# - 研究环境
+# - 高性能服务器
+# - 需要最强ML能力的场景
+
+# 安装方法：
+# pip install -r requirements-full.txt
