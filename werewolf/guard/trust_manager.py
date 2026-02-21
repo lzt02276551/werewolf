@@ -8,9 +8,17 @@
 3. 完善类型提示
 4. 添加输入验证
 """
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List
 from agent_build_sdk.utils.logger import logger
-from .exceptions import InvalidPlayerError, MemoryError as GuardMemoryError
+
+# 定义自定义异常
+class InvalidPlayerError(Exception):
+    """无效玩家错误"""
+    pass
+
+class GuardMemoryError(Exception):
+    """守卫内存错误"""
+    pass
 
 
 def monitor_performance(name=None):
