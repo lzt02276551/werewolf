@@ -152,17 +152,11 @@ class BaseGoodConfig(BaseConfig):
             self.TRUST_INJECTION_ATTACK_SYSTEM,
             self.TRUST_INJECTION_ATTACK_STATUS,
             self.TRUST_FALSE_QUOTATION,
-            self.TRUST_INACCURATE_VOTING
+            self.TRUST_INACCURATE_VOTING,
+            self.TRUST_WOLF_CHECK  # 被验为狼人也是惩罚
         ]
         if not all(-100 <= p <= 0 for p in trust_penalties):
-            raise ValueError("All trust penalties must be between -100 and 0")
-        
-        # 注意：TRUST_WOLF_CHECK是负数（被验为狼人）
-        if self.TRUST_WOLF_CHECK >= 0:
-            raise ValueError("TRUST_WOLF_CHECK must be negative (penalty for being checked as wolf)")
-        
-        if not (-100 <= self.TRUST_WOLF_CHECK <= 0):
-            raise ValueError("TRUST_WOLF_CHECK must be between -100 and 0")
+            raise ValueError("All trust penalties (including WOLF_CHECK) must be between -100 and 0")
         
         # 验证正向奖励
         trust_bonuses = [

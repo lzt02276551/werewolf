@@ -231,6 +231,36 @@ class WitchMemoryDAO(BaseMemoryDAO):
             天数
         """
         return self.get("current_day", 0)
+    
+    def increment_day(self) -> int:
+        """
+        增加天数计数
+        
+        Returns:
+            新的天数
+        """
+        current = self.get_current_day()
+        new_day = current + 1
+        self.set("current_day", new_day)
+        return new_day
+    
+    def get_wolves_eliminated(self) -> int:
+        """
+        获取已淘汰狼人数
+        
+        Returns:
+            狼人数
+        """
+        return self.get("wolves_eliminated", 0)
+    
+    def get_good_players_lost(self) -> int:
+        """
+        获取已损失好人数
+        
+        Returns:
+            好人数
+        """
+        return self.get("good_players_lost", 0)
 
 
 class DataValidator(CommonDataValidator):

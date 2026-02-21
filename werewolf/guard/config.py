@@ -82,18 +82,62 @@ class GuardConfig(BaseGoodConfig):
         
         # 守卫特定验证
         if not (0 <= self.GUARD_PRIORITY_HUNTER_MAX <= 100):
+            from agent_build_sdk.utils.logger import logger
+            logger.error(f"GUARD_PRIORITY_HUNTER_MAX must be 0-100, got {self.GUARD_PRIORITY_HUNTER_MAX}")
             return False
         
         # 验证概率范围
         prob_fields = [
-            self.KILL_PROB_CONFIRMED_SEER, self.KILL_PROB_HUNTER,
-            self.KILL_PROB_LIKELY_SEER, self.KILL_PROB_SHERIFF_HIGH_TRUST,
-            self.KILL_PROB_SHERIFF_LOW_TRUST, self.KILL_PROB_WITCH,
-            self.KILL_PROB_STRONG_VILLAGER
+            ('KILL_PROB_CONFIRMED_SEER', self.KILL_PROB_CONFIRMED_SEER),
+            ('KILL_PROB_HUNTER', self.KILL_PROB_HUNTER),
+            ('KILL_PROB_LIKELY_SEER', self.KILL_PROB_LIKELY_SEER),
+            ('KILL_PROB_SHERIFF_HIGH_TRUST', self.KILL_PROB_SHERIFF_HIGH_TRUST),
+            ('KILL_PROB_SHERIFF_LOW_TRUST', self.KILL_PROB_SHERIFF_LOW_TRUST),
+            ('KILL_PROB_WITCH', self.KILL_PROB_WITCH),
+            ('KILL_PROB_STRONG_VILLAGER', self.KILL_PROB_STRONG_VILLAGER)
         ]
-        if not all(0 <= p <= 1 for p in prob_fields):
+        
+        from agent_build_sdk.utils.logger import logger
+        for field_name, field_value in prob_fields:
+            if not (0 <= field_value <= 1):
+                logger.error(f"{field_name} must be 0-1, got {field_value}")
+                return False
+        
+        # 验证守卫优先级的逻辑顺序
+        if not (self.GUARD_PRIORITY_CONFIRMED_SEER > self.GUARD_PRIORITY_LIKELY_SEER):
+            logger.error("GUARD_PRIORITY_CONFIRMED_SEER must be > GUARD_PRIORITY_LIKELY_SEER")
             return False
         
+        if not (self.GUARD_PRIORITY_LIKELY_SEER > self.GUARD_PRIORITY_SHERIFF):
+            logger.error("GUARD_PRIORITY_LIKELY_SEER must be > GUARD_PRIORITY_SHERIFF")
+            return False
+        
+        # 验证击杀概率的逻辑顺序
+        if not (self.KILL_PROB_CONFIRMED_SEER > self.KILL_PROB_LIKELY_SEER):
+            logger.error("KILL_PROB_CONFIRMED_SEER must be > KILL_PROB_LIKELY_SEER")
+            return False
+        
+        if not (self.KILL_PROB_HUNTER < self.KILL_PROB_STRONG_VILLAGER):
+            logger.error("KILL_PROB_HUNTER should be < KILL_PROB_STRONG_VILLAGER (hunters are bait)")
+            return False
+        
+        # 验证角色特定配置
+        if not isinstance(self.role_specific, dict):
+            logger.error("role_specific must be a dictionary")
+            return False
+        
+        required_keys = ['first_night_strategy', 'protect_same_twice']
+        for key in required_keys:
+            if key not in self.role_specific:
+                logger.error(f"role_specific missing required key: {key}")
+                return False
+        
+        # 验证首夜策略
+        if self.role_specific['first_night_strategy'] not in ['empty_guard', 'random', 'high_trust']:
+            logger.error(f"Invalid first_night_strategy: {self.role_specific['first_night_strategy']}")
+            return False
+        
+        logger.info("✓ GuardConfig validation passed")
         return True
     
     def get_guard_priority(self, role_type: str) -> int:

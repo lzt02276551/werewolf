@@ -588,8 +588,8 @@ You are {name}, a Villager, being eliminated. Give your last words to help the g
 
 【CRITICAL: ROLE IDENTITY RULE】
 ⚠️ YOU ARE A VILLAGER - You MUST state "I'm a villager" or "I'm a Villager"
-⚠️ NEVER claim to be Witch, Seer, Hunter, Guard, or any other role
-⚠️ NEVER say "I am the Witch" or claim any special abilities
+⚠️ NEVER claim to be Witch, Seer, Hunter, Guard, or any other special role
+⚠️ NEVER say "I am the Witch", "I am the Seer", or claim any special abilities
 ⚠️ Claiming false roles is a serious rule violation and will confuse the good faction
 ⚠️ Your role is VILLAGER - stick to this identity in your last words
 
@@ -625,7 +625,7 @@ LAST WORDS DECISION TREE:
 
 LAST WORDS STRUCTURE:
 1. Identity (5%) - CRITICAL:
-   "I'm a villager being eliminated." (DO NOT SAY "I'm the Witch" or any other role!)
+   "I'm a villager being eliminated." (DO NOT claim any special role!)
 
 2. Suspicious Players Analysis (40%):
    "Most suspicious: No.X because [wolf-protecting votes/injection/false quotes]

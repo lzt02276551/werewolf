@@ -27,6 +27,11 @@ class WitchConfig(BaseGoodConfig):
     # ==================== 毒药使用阈值 ====================
     POISON_SCORE_THRESHOLD: int = 70  # 毒药使用最低分数
     
+    # ==================== 信任分数阈值（继承父类，但确保存在）====================
+    # 这些值继承自BaseGoodConfig，但在这里明确声明以便使用
+    # TRUST_VERY_LOW: int = 20  # 极低信任（继承）
+    # TRUST_LOW: int = 35  # 低信任（继承）
+    
     # ==================== 角色价值评分 ====================
     ROLE_VALUE_SEER: int = 100
     ROLE_VALUE_GUARD: int = 85
@@ -45,6 +50,16 @@ class WitchConfig(BaseGoodConfig):
     FIRST_NIGHT_STRATEGY_ALWAYS_SAVE: str = "always_save"
     FIRST_NIGHT_STRATEGY_OBSERVE: str = "observe_first"
     DEFAULT_FIRST_NIGHT_STRATEGY: str = "always_save"
+    
+    def __post_init__(self):
+        """初始化后处理，确保继承的属性可用"""
+        super().__post_init__() if hasattr(super(), '__post_init__') else None
+        
+        # 确保信任阈值存在（从父类继承）
+        if not hasattr(self, 'TRUST_VERY_LOW'):
+            self.TRUST_VERY_LOW = 20
+        if not hasattr(self, 'TRUST_LOW'):
+            self.TRUST_LOW = 35
     
     def validate(self) -> bool:
         """

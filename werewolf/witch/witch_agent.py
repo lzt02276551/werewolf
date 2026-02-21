@@ -24,7 +24,7 @@ from agent_build_sdk.utils.logger import logger
 from agent_build_sdk.sdk.agent import format_prompt
 from werewolf.core.base_good_agent import BaseGoodAgent
 from werewolf.witch.prompt import DESC_PROMPT, LAST_WORDS_PROMPT
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 import re
 
 # 导入女巫特有模块
@@ -50,14 +50,22 @@ class WitchAgent(BaseGoodAgent):
     - 药品状态管理
     """
 
-    def __init__(self, model_name: str, analysis_model_name: Optional[str] = None):
+    def __init__(self, model_name: str = None, analysis_model_name: Optional[str] = None):
         """
         初始化女巫代理
         
         Args:
-            model_name: LLM模型名称
-            analysis_model_name: 分析模型名称（可选，用于向后兼容）
+            model_name: LLM模型名称（可选）
+                       如果不提供，将从环境变量 MODEL_NAME 读取
+                       如果环境变量也没有，默认使用 "deepseek-chat"
+            analysis_model_name: 分析模型名称（可选，用于向后兼容，已废弃）
         """
+        # 如果没有提供model_name，从环境变量读取
+        if model_name is None:
+            import os
+            model_name = os.getenv('MODEL_NAME', 'deepseek-chat')
+            logger.info(f"Using model from environment: {model_name}")
+        
         # 调用父类初始化（自动初始化所有共享组件）
         super().__init__(ROLE_WITCH, model_name=model_name)
         
@@ -330,30 +338,229 @@ class WitchAgent(BaseGoodAgent):
         
         return False
     
+    # ==================== 上下文构建 ====================
+    
+    def _build_context(self) -> Dict[str, Any]:
+        """
+        构建女巫决策上下文（扩展父类方法）
+        
+        Returns:
+            包含女巫特有信息的上下文字典
+        """
+        # 获取父类的基础上下文
+        context = super()._build_context()
+        
+        # 添加女巫特有信息
+        context.update({
+            "has_antidote": self.memory_dao.get_has_antidote(),
+            "has_poison": self.memory_dao.get_has_poison(),
+            "saved_players": self.memory_dao.get_saved_players(),
+            "poisoned_players": self.memory_dao.get_poisoned_players(),
+            "current_night": self.memory_dao.get_current_night(),
+            "current_day": self.memory_dao.get_current_day(),
+            "wolves_eliminated": self.memory_dao.get("wolves_eliminated", 0),
+            "good_players_lost": self.memory_dao.get("good_players_lost", 0),
+        })
+        
+        return context
+    
     # ==================== 交互方法（使用父类方法）====================
     
     def interact(self, req: AgentReq) -> AgentResp:
-            """
-            处理交互请求（使用父类方法简化）
+        """
+        处理交互请求（使用父类方法简化）
 
-            Args:
-                req: 交互请求
+        Args:
+            req: 交互请求
 
-            Returns:
-                AgentResp: 交互响应
-            """
-            logger.info(f"[WITCH INTERACT] Status: {req.status}")
+        Returns:
+            AgentResp: 交互响应
+        """
+        logger.info(f"[WITCH INTERACT] Status: {req.status}")
 
-            if req.status == STATUS_SKILL:
-                return self._handle_skill(req)
-            elif req.status == STATUS_DISCUSS:
-                return self._interact_discuss(req)
-            elif req.status == STATUS_VOTE:
-                return self._interact_vote(req)
-            else:
-                # 未知状态，返回默认响应
-                logger.warning(f"[WITCH INTERACT] Unknown status: {req.status}, returning default response")
-                return AgentResp(success=True, result="", errMsg=None)
+        if req.status == STATUS_SKILL:
+            return self._handle_skill(req)
+        elif req.status == STATUS_DISCUSS:
+            return self._interact_discuss(req)
+        elif req.status == STATUS_VOTE:
+            return self._interact_vote(req)
+        elif "sheriff_election" in str(req.status).lower():
+            return self._handle_sheriff_election(req)
+        elif "sheriff_speech" in str(req.status).lower():
+            return self._handle_sheriff_speech(req)
+        elif "sheriff_vote" in str(req.status).lower():
+            return self._handle_sheriff_vote(req)
+        elif "sheriff_transfer" in str(req.status).lower():
+            return self._handle_sheriff_transfer(req)
+        elif "sheriff_pk" in str(req.status).lower():
+            return self._handle_sheriff_pk(req)
+        else:
+            # 未知状态，返回默认响应
+            logger.warning(f"[WITCH INTERACT] Unknown status: {req.status}, returning default response")
+            return AgentResp(success=True, result="", errMsg=None)
+    
+    # ==================== 警长相关方法 ====================
+    
+    def _handle_sheriff_election(self, req: AgentReq) -> AgentResp:
+        """
+        处理警长竞选决策
+        
+        Args:
+            req: 竞选请求
+            
+        Returns:
+            AgentResp: 是否竞选
+        """
+        from werewolf.witch.prompt import SHERIFF_ELECTION_PROMPT
+        
+        history = self.memory.load_history()
+        skill_info = self._format_skill_info()
+        
+        prompt = format_prompt(SHERIFF_ELECTION_PROMPT, {
+            "history": "\n".join(history[-30:]),
+            "name": self.memory_dao.get_my_name(),
+            "skill_info": skill_info
+        })
+        
+        result = self._llm_generate(prompt, temperature=0.3)
+        
+        # 解析结果
+        if "run" in result.lower() and "not" not in result.lower():
+            decision = "Run for Sheriff"
+        else:
+            decision = "Do Not Run"
+        
+        logger.info(f"[WITCH SHERIFF ELECTION] Decision: {decision}")
+        return AgentResp(success=True, result=decision, errMsg=None)
+    
+    def _handle_sheriff_speech(self, req: AgentReq) -> AgentResp:
+        """
+        处理警长竞选演讲
+        
+        Args:
+            req: 演讲请求
+            
+        Returns:
+            AgentResp: 演讲内容
+        """
+        from werewolf.witch.prompt import SHERIFF_SPEECH_PROMPT
+        
+        history = self.memory.load_history()
+        skill_info = self._format_skill_info()
+        
+        prompt = format_prompt(SHERIFF_SPEECH_PROMPT, {
+            "history": "\n".join(history[-30:]),
+            "name": self.memory_dao.get_my_name(),
+            "skill_info": skill_info
+        })
+        
+        result = self._llm_generate(prompt)
+        result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
+        
+        logger.info(f"[WITCH SHERIFF SPEECH] Generated (length: {len(result)})")
+        return AgentResp(success=True, result=result, errMsg=None)
+    
+    def _handle_sheriff_vote(self, req: AgentReq) -> AgentResp:
+        """
+        处理警长选举投票
+        
+        Args:
+            req: 投票请求
+            
+        Returns:
+            AgentResp: 投票目标
+        """
+        from werewolf.witch.prompt import SHERIFF_VOTE_PROMPT
+        
+        my_name = self.memory_dao.get_my_name()
+        choices = [name for name in req.message.split(",") if name != my_name]
+        
+        if not choices:
+            logger.warning("[WITCH SHERIFF VOTE] No valid choices")
+            return AgentResp(success=True, result="", errMsg=None)
+        
+        # 优先投给救过的玩家（验证好人）
+        saved_players = self.memory_dao.get_saved_players()
+        for saved in saved_players:
+            if saved in choices:
+                logger.info(f"[WITCH SHERIFF VOTE] Voting for saved player: {saved}")
+                return AgentResp(success=True, result=saved, errMsg=None)
+        
+        # 否则投给信任度最高的
+        trust_scores = self.memory_dao.get_trust_scores()
+        if trust_scores:
+            best_candidate = max(choices, key=lambda x: trust_scores.get(x, 50))
+            logger.info(f"[WITCH SHERIFF VOTE] Voting for highest trust: {best_candidate}")
+            return AgentResp(success=True, result=best_candidate, errMsg=None)
+        
+        # 默认第一个
+        logger.info(f"[WITCH SHERIFF VOTE] Default vote: {choices[0]}")
+        return AgentResp(success=True, result=choices[0], errMsg=None)
+    
+    def _handle_sheriff_transfer(self, req: AgentReq) -> AgentResp:
+        """
+        处理警徽转交
+        
+        Args:
+            req: 转交请求
+            
+        Returns:
+            AgentResp: 转交目标
+        """
+        from werewolf.witch.prompt import SHERIFF_TRANSFER_PROMPT
+        
+        my_name = self.memory_dao.get_my_name()
+        choices = [name for name in req.message.split(",") if name != my_name]
+        
+        if not choices:
+            logger.warning("[WITCH SHERIFF TRANSFER] No valid choices, destroying badge")
+            return AgentResp(success=True, result="Destroy Badge", errMsg=None)
+        
+        # 优先转给救过的玩家
+        saved_players = self.memory_dao.get_saved_players()
+        for saved in saved_players:
+            if saved in choices:
+                logger.info(f"[WITCH SHERIFF TRANSFER] Transferring to saved player: {saved}")
+                return AgentResp(success=True, result=saved, errMsg=None)
+        
+        # 否则转给信任度最高的
+        trust_scores = self.memory_dao.get_trust_scores()
+        if trust_scores:
+            best_candidate = max(choices, key=lambda x: trust_scores.get(x, 50))
+            if trust_scores.get(best_candidate, 0) >= 60:
+                logger.info(f"[WITCH SHERIFF TRANSFER] Transferring to highest trust: {best_candidate}")
+                return AgentResp(success=True, result=best_candidate, errMsg=None)
+        
+        # 如果没有高信任玩家，撕毁警徽
+        logger.info("[WITCH SHERIFF TRANSFER] No trustworthy candidate, destroying badge")
+        return AgentResp(success=True, result="Destroy Badge", errMsg=None)
+    
+    def _handle_sheriff_pk(self, req: AgentReq) -> AgentResp:
+        """
+        处理警长PK演讲
+        
+        Args:
+            req: PK请求
+            
+        Returns:
+            AgentResp: PK演讲内容
+        """
+        from werewolf.witch.prompt import SHERIFF_PK_PROMPT
+        
+        history = self.memory.load_history()
+        skill_info = self._format_skill_info()
+        
+        prompt = format_prompt(SHERIFF_PK_PROMPT, {
+            "history": "\n".join(history[-30:]),
+            "name": self.memory_dao.get_my_name(),
+            "skill_info": skill_info
+        })
+        
+        result = self._llm_generate(prompt)
+        result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
+        
+        logger.info(f"[WITCH SHERIFF PK] Generated (length: {len(result)})")
+        return AgentResp(success=True, result=result, errMsg=None)
 
     
     def _interact_discuss(self, req: AgentReq) -> AgentResp:
@@ -371,10 +578,14 @@ class WitchAgent(BaseGoodAgent):
         if "last words" in message.lower() or "遗言" in message:
             return self._generate_last_words()
         
-        # 使用父类的LLM生成方法
-        context = self._build_context()
+        # 构建发言提示词
+        history = self.memory.load_history()
+        skill_info = self._format_skill_info()
+        
         prompt = format_prompt(DESC_PROMPT, {
-            "history": context
+            "history": "\n".join(history[-50:]),  # 最近50条历史
+            "name": self.memory_dao.get_my_name(),
+            "skill_info": skill_info
         })
         
         result = self._llm_generate(prompt)
@@ -383,6 +594,25 @@ class WitchAgent(BaseGoodAgent):
         logger.info(f"[WITCH DISCUSS] Generated speech (length: {len(result)})")
         return AgentResp(success=True, result=result, errMsg=None)
     
+    def _format_skill_info(self) -> str:
+        """
+        格式化药品状态信息
+        
+        Returns:
+            药品状态描述
+        """
+        has_antidote = self.memory_dao.get_has_antidote()
+        has_poison = self.memory_dao.get_has_poison()
+        
+        if has_antidote and has_poison:
+            return "Antidote: Available, Poison: Available"
+        elif has_antidote:
+            return "Antidote: Available, Poison: Used"
+        elif has_poison:
+            return "Antidote: Used, Poison: Available"
+        else:
+            return "Antidote: Used, Poison: Used"
+    
     def _generate_last_words(self) -> AgentResp:
         """
         生成遗言（使用父类的LLM生成方法）
@@ -390,9 +620,15 @@ class WitchAgent(BaseGoodAgent):
         Returns:
             AgentResp: 遗言内容
         """
-        context = self._build_context()
+        history = self.memory.load_history()
+        skill_info = self._format_skill_info()
+        trust_summary = self._format_trust_summary()
+        
         prompt = format_prompt(LAST_WORDS_PROMPT, {
-            "history": context
+            "history": "\n".join(history[-50:]),
+            "name": self.memory_dao.get_my_name(),
+            "skill_info": skill_info,
+            "trust_summary": trust_summary
         })
         
         result = self._llm_generate(prompt)
@@ -400,6 +636,31 @@ class WitchAgent(BaseGoodAgent):
         
         logger.info(f"[WITCH LAST WORDS] Generated (length: {len(result)})")
         return AgentResp(success=True, result=result, errMsg=None)
+    
+    def _format_trust_summary(self) -> str:
+        """
+        格式化信任分数摘要
+        
+        Returns:
+            信任分数摘要
+        """
+        trust_scores = self.memory_dao.get_trust_scores()
+        if not trust_scores:
+            return "No trust data available"
+        
+        # 按信任分数排序
+        sorted_players = sorted(trust_scores.items(), key=lambda x: x[1])
+        
+        # 最可疑的3个
+        suspicious = sorted_players[:3]
+        # 最可信的3个
+        trustworthy = sorted_players[-3:]
+        
+        summary = "Trust Analysis:\n"
+        summary += "Most Suspicious: " + ", ".join([f"{p} ({s:.0f})" for p, s in suspicious]) + "\n"
+        summary += "Most Trustworthy: " + ", ".join([f"{p} ({s:.0f})" for p, s in reversed(trustworthy)])
+        
+        return summary
     
     def _interact_vote(self, req: AgentReq) -> AgentResp:
         """

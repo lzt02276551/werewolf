@@ -19,21 +19,6 @@ else:
     MemoryDAO = None
 
 
-def safe_execute(default_return=None):
-    """装饰器：安全执行函数，捕获异常并返回默认值"""
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                logger.error(f"Error in {func.__name__}: {e}")
-                return default_return if default_return is not None else None
-        return wrapper
-    return decorator
-
-
-
-
 # ==================== 开枪决策器 ====================
 
 class ShootDecisionMaker(BaseDecisionMaker):
@@ -52,7 +37,6 @@ class ShootDecisionMaker(BaseDecisionMaker):
         self.memory_dao = memory_dao
         self.validator = DataValidator()
     
-    @safe_execute(default_return=("Do Not Shoot", "Error occurred", {}))
     def decide(
         self, 
         candidates: List[str], 
@@ -74,14 +58,16 @@ class ShootDecisionMaker(BaseDecisionMaker):
         Returns:
             (目标, 理由, 所有候选人分数)
         """
-        # 过滤有效候选人（增强类型验证）
+        # 验证输入
         if not isinstance(candidates, list):
-            logger.error(f"[SHOOT] Invalid candidates type: {type(candidates)}, expected list")
-            return ("Do Not Shoot", "Invalid candidates type", {})
+            raise ValueError(f"Invalid candidates type: {type(candidates)}, expected list")
         
+        if not candidates:
+            return ("Do Not Shoot", "No candidates provided", {})
+        
+        # 过滤有效候选人
         dead_players = self.memory_dao.get_dead_players()
         if not isinstance(dead_players, set):
-            logger.warning(f"[SHOOT] dead_players is not a set, converting: {type(dead_players)}")
             dead_players = set(dead_players) if dead_players else set()
         
         valid_candidates = [
@@ -90,11 +76,12 @@ class ShootDecisionMaker(BaseDecisionMaker):
         ]
         
         if not valid_candidates:
-            return ("Do Not Shoot", "No valid targets", {})
+            return ("Do Not Shoot", "No valid targets after filtering", {})
         
         # 特殊情况处理
         special_target, special_reason = self._handle_special_situations(valid_candidates)
         if special_target:
+            logger.info(f"[SHOOT SPECIAL] {special_target}: {special_reason}")
             return (special_target, special_reason, {special_target: 200.0})
         
         # 计算每个候选人的开枪分数
@@ -102,11 +89,19 @@ class ShootDecisionMaker(BaseDecisionMaker):
         confidence_scores = {}
         
         for candidate in valid_candidates:
+            # 计算狼人概率
             wolf_prob = self.wolf_prob_calculator.calculate(candidate, game_phase)
+            
+            # 计算威胁等级
             threat_level = self.threat_analyzer.analyze(candidate, current_day, alive_count)
+            
+            # 计算置信度
             confidence = self._calculate_shoot_confidence(candidate)
+            
+            # 计算风险惩罚
             risk_penalty = self._calculate_shoot_risk_penalty(candidate)
             
+            # 综合评分
             base_score = wolf_prob * 70 + threat_level * 20
             final_score = base_score * confidence - risk_penalty
             
@@ -119,11 +114,10 @@ class ShootDecisionMaker(BaseDecisionMaker):
             )
         
         # 选择最高分
+        if not shoot_scores:
+            return ("Do Not Shoot", "No valid scores calculated", {})
+        
         sorted_candidates = sorted(shoot_scores.items(), key=lambda x: x[1], reverse=True)
-        
-        if not sorted_candidates:
-            return ("Do Not Shoot", "No valid targets", {})
-        
         target = sorted_candidates[0][0]
         score = sorted_candidates[0][1]
         confidence = confidence_scores[target]
@@ -145,9 +139,80 @@ class ShootDecisionMaker(BaseDecisionMaker):
         return (target, reason, shoot_scores)
     
     def _handle_special_situations(self, candidates: List[str]) -> Tuple[Optional[str], Optional[str]]:
-        """处理特殊情况"""
-        # TODO: 实现特殊情况处理（预言家查杀、投票领袖等）
+        """
+        处理特殊情况（与SKILL_PROMPT中的决策树一致）
+        
+        特殊情况包括：
+        A) 预言家查杀的狼人还活着 → 优先射击（95%狼概率）
+        B) 假预言家 vs 真预言家 → 射击假预言家（80%狼概率）
+        C) 错误投票淘汰（被冤枉） → 射击投票领袖
+        D) 狼王嫌疑 → 评估是否射击（狼王会反击）
+        E) 多个高概率目标 → 比较威胁等级
+        F) 所有候选人低概率 → 考虑放弃射击
+        
+        Args:
+            candidates: 候选人列表
+            
+        Returns:
+            (特殊目标, 特殊原因) 或 (None, None)
+        """
+        # A) 预言家查杀的狼人
+        seer_checks = self.memory_dao.get("seer_checks") or {}
+        for player, result in seer_checks.items():
+            if player in candidates:
+                # 检查是否被预言家验证为狼人
+                is_wolf = False
+                if isinstance(result, dict):
+                    is_wolf = result.get("is_wolf", False)
+                elif isinstance(result, str):
+                    is_wolf = "wolf" in result.lower()
+                
+                if is_wolf:
+                    return (player, f"Seer identified {player} as wolf (95% confidence)")
+        
+        # C) 错误投票淘汰 - 射击投票领袖
+        # 获取最近的投票记录，找出谁推动了对我的投票
+        voting_history = self.memory_dao.get_voting_history()
+        my_name = self.memory_dao.get_my_name()
+        
+        # 分析投票领袖（谁最积极地推动投票）
+        if voting_history and my_name:
+            vote_leaders = self._identify_vote_leaders(voting_history, my_name, candidates)
+            if vote_leaders:
+                leader = vote_leaders[0]
+                return (leader, f"Vote leader who pushed for my elimination (likely wolf)")
+        
         return (None, None)
+    
+    def _identify_vote_leaders(
+        self, 
+        voting_history: Dict[str, List[str]], 
+        target: str, 
+        candidates: List[str]
+    ) -> List[str]:
+        """
+        识别投票领袖
+        
+        Args:
+            voting_history: 投票历史
+            target: 被投票的目标
+            candidates: 候选人列表
+            
+        Returns:
+            投票领袖列表（按积极程度排序）
+        """
+        vote_counts = {}
+        
+        for voter, votes in voting_history.items():
+            if voter in candidates and isinstance(votes, list):
+                # 统计投票给目标的次数
+                target_votes = sum(1 for v in votes if v == target)
+                if target_votes > 0:
+                    vote_counts[voter] = target_votes
+        
+        # 按投票次数排序
+        sorted_leaders = sorted(vote_counts.items(), key=lambda x: x[1], reverse=True)
+        return [leader for leader, _ in sorted_leaders]
     
     def _calculate_shoot_confidence(self, player: str) -> float:
         """计算开枪置信度（0.0-1.0）"""

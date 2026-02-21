@@ -4,6 +4,7 @@
 使用继承机制减少代码重复，提高可维护性
 """
 
+from typing import Dict, List, Optional
 from .prompt import (
     DESC_PROMPT,
     VOTE_PROMPT,
@@ -69,13 +70,21 @@ class VillagerAgent(BaseGoodAgent):
     - 无特殊技能（纯粹的推理和投票）
     """
 
-    def __init__(self, model_name):
+    def __init__(self, model_name: str = None):
         """
         初始化平民代理
         
         Args:
-            model_name: LLM模型名称
+            model_name: LLM模型名称（可选）
+                       如果不提供，将从环境变量 MODEL_NAME 读取
+                       如果环境变量也没有，默认使用 "deepseek-chat"
         """
+        # 如果没有提供model_name，从环境变量读取
+        if model_name is None:
+            import os
+            model_name = os.getenv('MODEL_NAME', 'deepseek-chat')
+            logger.info(f"Using model from environment: {model_name}")
+        
         # 调用父类初始化（会自动初始化所有共享组件）
         super().__init__(ROLE_VILLAGER, model_name=model_name)
         
@@ -94,26 +103,18 @@ class VillagerAgent(BaseGoodAgent):
         - LastWordsGenerator: 遗言生成器
         - SpeechPositionAnalyzer: 发言位置分析器
         """
-        try:
-            self.badge_transfer_decision_maker = BadgeTransferDecisionMaker(
-                self.config, self.trust_score_calculator
-            )
-            self.speech_order_decision_maker = SpeechOrderDecisionMaker(
-                self.config, self.trust_score_calculator
-            )
-            self.last_words_generator = LastWordsGenerator(
-                self.config, self.trust_score_calculator, self.voting_pattern_analyzer
-            )
-            self.speech_position_analyzer = SpeechPositionAnalyzer(self.config)
-            
-            logger.info("✓ Villager-specific components initialized")
-        except Exception as e:
-            logger.error(f"✗ Failed to initialize villager-specific components: {e}")
-            # 设置为 None 以支持降级
-            self.badge_transfer_decision_maker = None
-            self.speech_order_decision_maker = None
-            self.last_words_generator = None
-            self.speech_position_analyzer = None
+        self.badge_transfer_decision_maker = BadgeTransferDecisionMaker(
+            self.config, self.trust_score_calculator
+        )
+        self.speech_order_decision_maker = SpeechOrderDecisionMaker(
+            self.config, self.trust_score_calculator
+        )
+        self.last_words_generator = LastWordsGenerator(
+            self.config, self.trust_score_calculator, self.voting_pattern_analyzer
+        )
+        self.speech_position_analyzer = SpeechPositionAnalyzer(self.config)
+        
+        logger.info("✓ Villager-specific components initialized")
 
 
     # ==================== 辅助方法 ====================
@@ -704,7 +705,7 @@ class VillagerAgent(BaseGoodAgent):
                 logger.info("prompt:" + prompt)
                 result = self.llm_caller(prompt)
                 
-                # 验证LLM输出
+                # 验证LLM输出（使用基类的增强验证方法）
                 result = self._validate_player_name(result, choices)
             else:
                 # 纯代码模式

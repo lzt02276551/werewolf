@@ -29,9 +29,9 @@ from agent_build_sdk.utils.logger import logger
 from agent_build_sdk.sdk.agent import format_prompt
 from werewolf.core.base_good_agent import BaseGoodAgent
 from .prompt import (
-    DESC_PROMPT, VOTE_PROMPT, SKILL_PROMPT, GAME_RULE_PROMPT,
-    SHERIFF_ELECTION_PROMPT, SHERIFF_SPEECH_PROMPT, SHERIFF_VOTE_PROMPT, 
-    SHERIFF_SPEECH_ORDER_PROMPT, SHERIFF_TRANSFER_PROMPT, SHERIFF_PK_PROMPT, 
+    DESC_PROMPT, 
+    SHERIFF_SPEECH_PROMPT, 
+    SHERIFF_PK_PROMPT, 
     LAST_WORDS_PROMPT
 )
 from typing import Dict, List, Tuple, Optional
@@ -41,9 +41,7 @@ import os
 from .config import SeerConfig
 from .memory_dao import SeerMemoryDAO
 from .analyzers import CheckPriorityCalculator
-from .decision_makers import (
-    CheckDecisionMaker, IdentityRevealDecisionMaker
-)
+from .decision_makers import CheckDecisionMaker
 from .utils import CheckReasonGenerator
 
 
@@ -64,20 +62,32 @@ class SeerAgent(BaseGoodAgent):
     - 验人优先级计算
     """
 
-    def __init__(self, model_name):
+    def __init__(self, model_name: str = None):
         """
         初始化预言家代理
         
         Args:
-            model_name: LLM模型名称
+            model_name: LLM模型名称（可选）
+                       如果不提供，将从环境变量 MODEL_NAME 读取
+                       如果环境变量也没有，默认使用 "deepseek-chat"
         """
+        # 如果没有提供model_name，从环境变量读取
+        if model_name is None:
+            import os
+            model_name = os.getenv('MODEL_NAME', 'deepseek-chat')
+            logger.info(f"Using model from environment: {model_name}")
+        
         # 调用父类初始化（自动初始化所有共享组件）
         super().__init__(ROLE_SEER, model_name=model_name)
         
-        # 初始化预言家配置
+        # 覆盖配置为预言家特有配置
+        # 注意：SeerConfig 继承自 BaseGoodConfig，所以所有父类组件仍然可以正常工作
         self.config = SeerConfig()
         
-        # 初始化DAO
+        # 重新初始化预言家特有组件（使用新配置）
+        self._init_specific_components()
+        
+        # 初始化DAO（使用预言家的MemoryDAO）
         self.memory_dao = SeerMemoryDAO(self.memory)
         
         logger.info("✓ SeerAgent initialized with BaseGoodAgent")
@@ -109,22 +119,185 @@ class SeerAgent(BaseGoodAgent):
         - CheckDecisionMaker: 验人决策
         - CheckPriorityCalculator: 验人优先级计算
         - CheckReasonGenerator: 验人理由生成
-        - IdentityRevealDecisionMaker: 身份公开决策
+        - BadgeTransferDecisionMaker: 警徽转移决策（从平民继承）
+        - SpeechOrderDecisionMaker: 发言顺序决策（从平民继承）
+        
+        从父类继承的组件（已在BaseGoodAgent中初始化）：
+        - sheriff_election_decision_maker: 警长选举决策
+        - sheriff_vote_decision_maker: 警长投票决策
         """
-        try:
-            self.check_decision_maker = CheckDecisionMaker(self.config)
-            self.check_priority_calculator = CheckPriorityCalculator(self.config)
-            self.check_reason_generator = CheckReasonGenerator(self.config)
-            self.identity_reveal_maker = IdentityRevealDecisionMaker(self.config)
+        # 初始化预言家特有组件
+        self.check_decision_maker = CheckDecisionMaker(self.config)
+        self.check_priority_calculator = CheckPriorityCalculator(self.config)
+        self.check_reason_generator = CheckReasonGenerator(self.config)
+        
+        # 初始化警徽转移和发言顺序决策器（从平民模块导入）
+        from werewolf.villager.decision_makers import (
+            BadgeTransferDecisionMaker,
+            SpeechOrderDecisionMaker
+        )
+        
+        self.badge_transfer_decision_maker = BadgeTransferDecisionMaker(
+            self.config, self.trust_score_calculator
+        )
+        self.speech_order_decision_maker = SpeechOrderDecisionMaker(
+            self.config, self.trust_score_calculator
+        )
+        
+        logger.info("✓ Seer-specific components initialized")
+    
+    # ==================== 辅助方法 ====================
+    
+    def _is_last_words_phase(self, message: str) -> bool:
+        """
+        统一的遗言阶段检测方法
+        
+        Args:
+            message: 消息内容
             
-            logger.info("✓ Seer-specific components initialized")
-        except Exception as e:
-            logger.error(f"✗ Failed to initialize seer-specific components: {e}")
-            # 设置为None以支持降级
-            self.check_decision_maker = None
-            self.check_priority_calculator = None
-            self.check_reason_generator = None
-            self.identity_reveal_maker = None
+        Returns:
+            是否是遗言阶段
+        """
+        if not message or not isinstance(message, str):
+            return False
+        
+        message_lower = message.lower()
+        last_words_keywords = [
+            "last words", "final words", "遗言",
+            "leaves their last words", "leaves his last words", "leaves her last words",
+            "'s last words", "最后的话"
+        ]
+        
+        return any(keyword in message_lower for keyword in last_words_keywords)
+    
+    def _build_context(self) -> str:
+        """
+        构建上下文字符串（用于prompt）
+        
+        Returns:
+            格式化的上下文字符串
+        """
+        history = self.memory_dao.get_history()
+        if not history:
+            return "No history available."
+        
+        # 只取最近的10条记录
+        recent_history = history[-10:] if len(history) > 10 else history
+        return "\n".join(recent_history)
+    
+    def _format_checked_players(self) -> str:
+        """
+        格式化检查结果
+        
+        Returns:
+            格式化的检查结果字符串
+        """
+        checked_players = self.memory_dao.get_checked_players()
+        if not checked_players:
+            return "No checks performed yet."
+        
+        lines = []
+        for player, data in sorted(checked_players.items(), key=lambda x: x[1].get('night', 0)):
+            is_wolf = data.get('is_wolf', False)
+            night = data.get('night', 0)
+            result = "WOLF" if is_wolf else "GOOD"
+            lines.append(f"Night {night}: {player} → {result}")
+        
+        return "\n".join(lines)
+    
+    def _format_trust_summary(self, alive_players: List[str], my_name: str) -> str:
+        """
+        格式化信任分数摘要（统一格式）
+        
+        Args:
+            alive_players: 存活玩家列表
+            my_name: 自己的名字
+            
+        Returns:
+            格式化的信任分数摘要
+        """
+        trust_scores = self.memory_dao.get_trust_scores()
+        if not trust_scores or not alive_players:
+            return "No trust data"
+        
+        sorted_players = sorted(
+            [(p, trust_scores.get(p, 50)) for p in alive_players if p != my_name],
+            key=lambda x: x[1],
+            reverse=True
+        )
+        
+        trust_lines = [f"{p}: {score:.0f}" for p, score in sorted_players[:8]]
+        return "\n".join(trust_lines) if trust_lines else "No trust data"
+    
+    def _determine_game_phase(self, current_day: int, alive_count: int) -> tuple:
+        """
+        确定游戏阶段和策略
+        
+        Args:
+            current_day: 当前天数
+            alive_count: 存活人数
+            
+        Returns:
+            (游戏阶段, 阶段策略)
+        """
+        checked_players = self.memory_dao.get_checked_players()
+        has_wolf_check = any(data.get('is_wolf', False) for data in checked_players.values())
+        
+        if has_wolf_check:
+            return ("Reveal Phase", "REVEAL immediately - you have wolf check, guide voting")
+        
+        game_state = self.memory_dao.get_game_state()
+        fake_seer_appeared = game_state.get('fake_seer_name') is not None
+        
+        if fake_seer_appeared:
+            return ("Counter-Claim Phase", "COUNTER-CLAIM immediately - fake seer appeared")
+        
+        if current_day <= self.config.EARLY_GAME_MAX_DAY:
+            return ("Early Game", "Stay hidden, gather more checks, analyze behavior")
+        elif current_day <= self.config.MID_GAME_MAX_DAY:
+            return ("Mid Game", "Consider revealing if good faction needs leadership")
+        elif alive_count <= self.config.ENDGAME_ALIVE_THRESHOLD or current_day >= 6:
+            return ("Late Game", "Reveal identity and lead good faction to victory")
+        else:
+            return ("Mid Game", "Consider revealing if good faction needs leadership")
+    
+    def _get_current_day(self) -> int:
+        """获取当前天数"""
+        day_count = self.memory_dao.get_day_count()
+        if day_count:
+            return day_count
+        game_state = self.memory_dao.get_game_state()
+        return game_state.get('current_day', 1)
+    
+    def _get_alive_count(self) -> int:
+        """
+        获取存活人数
+        
+        Returns:
+            存活人数
+            
+        Raises:
+            ValueError: 如果无法获取存活人数
+        """
+        game_state = self.memory_dao.get_game_state()
+        alive_count = game_state.get('alive_count')
+        if alive_count:
+            return alive_count
+        
+        # 从发言历史和死亡玩家计算
+        speech_history = self.memory_dao.get_speech_history()
+        dead_players = self.memory_dao.get_dead_players()
+        
+        if not speech_history:
+            raise ValueError("无法获取存活人数：发言历史为空且game_state中没有alive_count")
+        
+        all_players = set(speech_history.keys())
+        alive = all_players - dead_players
+        
+        if not alive:
+            raise ValueError("无法获取存活人数：计算结果为0")
+        
+        return len(alive)
     
     def perceive(self, req=AgentReq):
         """
@@ -154,23 +327,21 @@ class SeerAgent(BaseGoodAgent):
         
         # 更新信任分数
         trust_scores = self.memory_dao.get_trust_scores()
-        trust_history = self.memory_dao.get_trust_history()
         
         if is_wolf:
-            self.trust_score_manager.update(
+            new_score = self.trust_score_manager.analyze(
                 target_player, self.config.TRUST_WOLF_CHECK, 1.0, 1.0,
-                trust_scores, trust_history
+                trust_scores
             )
         else:
-            self.trust_score_manager.update(
+            new_score = self.trust_score_manager.analyze(
                 target_player, self.config.TRUST_GOOD_CHECK, 1.0, 1.0,
-                trust_scores, trust_history
+                trust_scores
             )
         
         self.memory_dao.set_trust_scores(trust_scores)
-        self.memory_dao.set_trust_history(trust_history)
         
-        logger.info(f"Check result: {target_player} is {'WOLF' if is_wolf else 'GOOD'}")
+        logger.info(f"Check result: {target_player} is {'WOLF' if is_wolf else 'GOOD'}, trust score: {new_score}")
     
 
     
@@ -227,6 +398,9 @@ class SeerAgent(BaseGoodAgent):
             
         Returns:
             AgentResp: 发言内容
+            
+        Raises:
+            RuntimeError: 如果发言生成失败
         """
         if req.message:
             self.memory_dao.append_history(req.message)
@@ -234,25 +408,51 @@ class SeerAgent(BaseGoodAgent):
         my_name = self.memory_dao.get_my_name()
         message = str(req.message or "")
         
-        # 检查是否是遗言阶段
-        if "last words" in message.lower() or "遗言" in message:
+        # 检查是否是遗言阶段（使用统一方法）
+        if self._is_last_words_phase(message):
             return self._generate_last_words()
         
         # 正常讨论阶段 - 使用父类的LLM生成方法
-        checked_players = self.memory_dao.get_checked_players()
-        context = self._build_context()
-        
-        prompt = format_prompt(DESC_PROMPT, {
-            "name": my_name,
-            "checked_players": checked_players,
-            "history": context
-        })
-        
-        result = self._llm_generate(prompt)
-        result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
-        
-        logger.info(f"[SEER DISCUSS] Generated speech (length: {len(result)})")
-        return AgentResp(success=True, result=result, errMsg=None)
+        try:
+            # 获取基本信息
+            current_day = self._get_current_day()
+            alive_count = self._get_alive_count()
+            
+            # 格式化检查结果
+            checked_players_str = self._format_checked_players()
+            
+            # 确定游戏阶段
+            game_phase, phase_strategy = self._determine_game_phase(current_day, alive_count)
+            
+            # 构建历史记录
+            context = self._build_context()
+            
+            # 格式化prompt
+            prompt = format_prompt(DESC_PROMPT, {
+                "name": my_name,
+                "checked_players": checked_players_str,
+                "history": context,
+                "game_phase": game_phase,
+                "current_day": current_day,
+                "alive_count": alive_count,
+                "phase_strategy": phase_strategy
+            })
+            
+            result = self._llm_generate(prompt)
+            
+            if not result or len(result.strip()) == 0:
+                raise RuntimeError("LLM生成的发言为空")
+            
+            result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
+            
+            logger.info(f"[SEER DISCUSS] Generated speech (length: {len(result)})")
+            return AgentResp(success=True, result=result, errMsg=None)
+            
+        except Exception as e:
+            logger.error(f"[SEER DISCUSS] Error generating speech: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"预言家发言生成失败: {e}") from e
     
     def _generate_last_words(self) -> AgentResp:
         """
@@ -260,22 +460,41 @@ class SeerAgent(BaseGoodAgent):
         
         Returns:
             AgentResp: 遗言内容
+            
+        Raises:
+            RuntimeError: 如果遗言生成失败
         """
-        my_name = self.memory_dao.get_my_name()
-        checked_players = self.memory_dao.get_checked_players()
-        context = self._build_context()
-        
-        prompt = format_prompt(LAST_WORDS_PROMPT, {
-            "name": my_name,
-            "checked_players": checked_players,
-            "history": context
-        })
-        
-        result = self._llm_generate(prompt)
-        result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
-        
-        logger.info(f"[SEER LAST WORDS] Generated (length: {len(result)})")
-        return AgentResp(success=True, result=result, errMsg=None)
+        try:
+            my_name = self.memory_dao.get_my_name()
+            
+            # 格式化检查结果
+            checked_players_str = self._format_checked_players()
+            
+            # 构建历史记录
+            context = self._build_context()
+            
+            # 格式化prompt
+            prompt = format_prompt(LAST_WORDS_PROMPT, {
+                "name": my_name,
+                "checked_players": checked_players_str,
+                "history": context
+            })
+            
+            result = self._llm_generate(prompt)
+            
+            if not result or len(result.strip()) == 0:
+                raise RuntimeError("LLM生成的遗言为空")
+            
+            result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
+            
+            logger.info(f"[SEER LAST WORDS] Generated (length: {len(result)})")
+            return AgentResp(success=True, result=result, errMsg=None)
+            
+        except Exception as e:
+            logger.error(f"[SEER LAST WORDS] Error generating: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"预言家遗言生成失败: {e}") from e
     
     
     def _interact_vote(self, req) -> AgentResp:
@@ -301,16 +520,29 @@ class SeerAgent(BaseGoodAgent):
 
     
     def _interact_skill(self, req) -> AgentResp:
-        """处理技能使用（检查决策）"""
+        """
+        处理技能使用（检查决策）- 使用决策器
+        
+        Args:
+            req: 技能请求
+            
+        Returns:
+            AgentResp: 检查目标
+        """
         checked_players = self.memory_dao.get_checked_players()
         my_name = self.memory_dao.get_my_name()
         
-        choices = [name for name in req.message.split(",")
-                  if name != my_name and name not in checked_players]
+        # 解析候选人列表
+        all_choices = [name.strip() for name in req.message.split(",") if name.strip()]
+        choices = [name for name in all_choices if name != my_name]
         
         if not choices:
             logger.warning("No valid choices for skill, using first available")
-            choices = [name for name in req.message.split(",") if name != my_name]
+            choices = all_choices
+        
+        if not choices:
+            logger.error("No choices available for skill")
+            return AgentResp(success=True, result="No.1", skillTargetPlayer="No.1", errMsg=None)
         
         # 构建上下文
         context = {
@@ -326,20 +558,10 @@ class SeerAgent(BaseGoodAgent):
             'night_count': self.memory_dao.get_night_count()
         }
         
-        # 计算每个候选人的检查优先级
-        check_scores = {}
-        for player in choices:
-            score = self.check_priority_calculator.calculate(player, context)
-            check_scores[player] = score
-            logger.info(f"Check priority for {player}: {score:.1f}")
+        # 使用决策器做出检查决策
+        target, reason = self.check_decision_maker.decide(choices, context)
         
-        # 选择最高优先级
-        if check_scores:
-            target = max(check_scores.items(), key=lambda x: x[1])[0]
-        else:
-            target = choices[0] if choices else "No.1"
-        
-        logger.info(f"seer skill result: {target}")
+        logger.info(f"[SEER SKILL] Target: {target}, Reason: {reason}")
         return AgentResp(success=True, result=target, skillTargetPlayer=target, errMsg=None)
     
     def _interact_sheriff_election(self, req) -> AgentResp:
@@ -352,7 +574,7 @@ class SeerAgent(BaseGoodAgent):
             'night_count': self.memory_dao.get_night_count()
         }
         
-        should_run, reason = self.sheriff_election_maker.decide(context)
+        should_run, reason = self.sheriff_election_decision_maker.decide(context)
         logger.info(f"[DECISION TREE SHERIFF] Should run: {should_run}, Reason: {reason}")
         
         result = "Run for Sheriff" if should_run else "Do Not Run"
@@ -363,27 +585,47 @@ class SeerAgent(BaseGoodAgent):
         """
         处理警长竞选发言（使用父类的LLM生成方法）
         
+        注意：警长选举发生在死亡公告之前，不能引用当晚的死亡信息
+        
         Args:
             req: 竞选发言请求
             
         Returns:
             AgentResp: 竞选发言内容
         """
-        my_name = self.memory_dao.get_my_name()
-        checked_players = self.memory_dao.get_checked_players()
-        context = self._build_context()
-        
-        prompt = format_prompt(SHERIFF_SPEECH_PROMPT, {
-            "name": my_name,
-            "checked_players": checked_players,
-            "history": context
-        })
-        
-        result = self._llm_generate(prompt)
-        result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
-        
-        logger.info(f"[SEER SHERIFF SPEECH] Generated (length: {len(result)})")
-        return AgentResp(success=True, result=result, errMsg=None)
+        try:
+            my_name = self.memory_dao.get_my_name()
+            
+            # 格式化检查结果
+            checked_players_str = self._format_checked_players()
+            
+            # 构建历史记录（只包含之前的信息，不包含当晚死亡）
+            context = self._build_context()
+            
+            # 添加时序约束提醒
+            timing_reminder = "⚠️ CRITICAL: Sheriff election happens BEFORE death announcements. Do NOT mention who died last night."
+            
+            # 格式化prompt
+            prompt = format_prompt(SHERIFF_SPEECH_PROMPT, {
+                "name": my_name,
+                "checked_players": checked_players_str,
+                "history": context
+            })
+            
+            # 在prompt前添加时序约束
+            prompt = f"{timing_reminder}\n\n{prompt}"
+            
+            result = self._llm_generate(prompt)
+            result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
+            
+            logger.info(f"[SEER SHERIFF SPEECH] Generated (length: {len(result)})")
+            return AgentResp(success=True, result=result, errMsg=None)
+            
+        except Exception as e:
+            logger.error(f"[SEER SHERIFF SPEECH] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return AgentResp(success=True, result="I am the Seer running for sheriff to help the good team.", errMsg=None)
     
     def _interact_sheriff_vote(self, req) -> AgentResp:
         """处理警长投票决策（使用决策器）"""
@@ -396,7 +638,7 @@ class SeerAgent(BaseGoodAgent):
             'trust_scores': self.memory_dao.get_trust_scores()
         }
         
-        target, reason = self.sheriff_vote_maker.decide(choices, context)
+        target, reason = self.sheriff_vote_decision_maker.decide(choices, context)
         logger.info(f"[DECISION TREE SHERIFF VOTE] Target: {target}, Reason: {reason}")
         
         return AgentResp(success=True, result=target, errMsg=None)
@@ -410,7 +652,7 @@ class SeerAgent(BaseGoodAgent):
             'trust_scores': self.memory_dao.get_trust_scores()
         }
         
-        order, reason = self.speech_order_maker.decide(context)
+        order, reason = self.speech_order_decision_maker.decide(context)
         logger.info(f"[DECISION TREE SPEECH ORDER] Order: {order}, Reason: {reason}")
         
         return AgentResp(success=True, result=order, errMsg=None)
@@ -427,7 +669,7 @@ class SeerAgent(BaseGoodAgent):
             'trust_scores': self.memory_dao.get_trust_scores()
         }
         
-        target, reason = self.badge_transfer_maker.decide(choices, context)
+        target, reason = self.badge_transfer_decision_maker.decide(choices, context)
         logger.info(f"[DECISION TREE BADGE TRANSFER] Target: {target}, Reason: {reason}")
         
         return AgentResp(success=True, result=target, errMsg=None)
@@ -442,25 +684,37 @@ class SeerAgent(BaseGoodAgent):
         Returns:
             AgentResp: PK发言内容
         """
-        my_name = self.memory_dao.get_my_name()
-        checked_players = self.memory_dao.get_checked_players()
-        context = self._build_context()
-        
-        # 识别对手
-        opponent = "Unknown"
-        game_state = self.memory_dao.get_game_state()
-        if game_state.get('fake_seer_name'):
-            opponent = game_state['fake_seer_name']
-        
-        prompt = format_prompt(SHERIFF_PK_PROMPT, {
-            "name": my_name,
-            "opponent": opponent,
-            "checked_players": checked_players,
-            "history": context
-        })
-        
-        result = self._llm_generate(prompt)
-        result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
-        
-        logger.info(f"[SEER SHERIFF PK] Generated (length: {len(result)})")
-        return AgentResp(success=True, result=result, errMsg=None)
+        try:
+            my_name = self.memory_dao.get_my_name()
+            
+            # 格式化检查结果
+            checked_players_str = self._format_checked_players()
+            
+            # 构建历史记录
+            context = self._build_context()
+            
+            # 识别对手
+            opponent = "Unknown"
+            game_state = self.memory_dao.get_game_state()
+            if game_state.get('fake_seer_name'):
+                opponent = game_state['fake_seer_name']
+            
+            # 格式化prompt
+            prompt = format_prompt(SHERIFF_PK_PROMPT, {
+                "name": my_name,
+                "opponent": opponent,
+                "checked_players": checked_players_str,
+                "history": context
+            })
+            
+            result = self._llm_generate(prompt)
+            result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
+            
+            logger.info(f"[SEER SHERIFF PK] Generated (length: {len(result)})")
+            return AgentResp(success=True, result=result, errMsg=None)
+            
+        except Exception as e:
+            logger.error(f"[SEER SHERIFF PK] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return AgentResp(success=True, result="I am the true Seer. Vote for me to lead the good faction.", errMsg=None)

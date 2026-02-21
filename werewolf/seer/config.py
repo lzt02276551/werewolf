@@ -6,76 +6,67 @@ Seer (预言家) 配置
 
 from dataclasses import dataclass
 from typing import ClassVar
-from werewolf.core.config import BaseConfig
+from werewolf.core.base_good_config import BaseGoodConfig
 
 
 @dataclass
-class SeerConfig(BaseConfig):
+class SeerConfig(BaseGoodConfig):
     """
     预言家配置类
     
-    继承自BaseConfig，提供预言家特定的配置参数
+    继承自BaseGoodConfig，提供预言家特定的配置参数
     
-    Attributes:
+    预言家特有配置:
         check_strategy: 验人策略(suspicious/random/strategic)
         reveal_threshold: 跳预言家阈值（第几天）
         trust_check_result: 是否完全信任验人结果
-        max_speech_length: 最大发言长度
-        min_speech_length: 最小发言长度
+        check_priority_weights: 检查优先级权重配置
         
-    信任分数调整常量:
-        TRUST_WOLF_CHECK: 检查到狼人的信任分数变化
-        TRUST_GOOD_CHECK: 检查到好人的信任分数变化
-        TRUST_KILLED_AT_NIGHT: 夜晚被杀的信任分数变化
-        TRUST_INJECTION_ATTACK_SYSTEM: 系统伪造注入攻击的信任分数变化
-        TRUST_INJECTION_ATTACK_STATUS: 状态伪造注入攻击的信任分数变化
-        TRUST_FALSE_QUOTATION: 虚假引用的信任分数变化
-        TRUST_LOGICAL_SPEECH: 逻辑发言的信任分数变化
-        TRUST_VOTED_OUT: 被投票出局的信任分数变化
-        TRUST_ACCURATE_VOTING: 准确投票的信任分数变化
-        TRUST_INACCURATE_VOTING: 不准确投票的信任分数变化
-        TRUST_ELECTED_SHERIFF: 当选警长的信任分数变化
-        
-    游戏阶段配置:
-        EARLY_GAME_MAX_DAY: 早期游戏最大天数
-        MID_GAME_MAX_DAY: 中期游戏最大天数
-        ENDGAME_ALIVE_THRESHOLD: 终局存活人数阈值
-        
-    ML配置:
-        ML_INITIAL_CONFIDENCE: ML初始置信度
-        MAX_SPEECH_LENGTH: 最大发言长度（用于截断）
+    继承自BaseGoodConfig的配置:
+        - 信任分数调整常量（TRUST_*）
+        - 游戏阶段配置（EARLY_GAME_MAX_DAY, MID_GAME_MAX_DAY, ENDGAME_ALIVE_THRESHOLD）
+        - ML配置（ML_ENABLED, ML_MODEL_DIR, ML_RETRAIN_INTERVAL, ML_FUSION_RATIO）
+        - 发言配置（MAX_SPEECH_LENGTH, MIN_SPEECH_LENGTH）
+        - 决策配置（DECISION_MODE, VOTE_STRATEGY）
+        - 检测器配置（*_DETECTION_ENABLED）
     """
     
     # 预言家特定配置
-    check_strategy: str = "suspicious"
-    reveal_threshold: int = 2
-    trust_check_result: bool = True
+    check_strategy: str = "suspicious"  # suspicious: 优先检查可疑玩家, strategic: 战略检查, random: 随机检查
+    reveal_threshold: int = 2  # 第几天考虑跳预言家（如果有狼人检查）
+    trust_check_result: bool = True  # 是否完全信任验人结果（应该为True）
     
-    # 发言配置
-    max_speech_length: int = 1400
-    min_speech_length: int = 900
+    # 检查优先级权重配置
+    check_priority_weights: dict = None  # 将在__post_init__中初始化
     
-    # 信任分数调整常量（类变量）
-    TRUST_WOLF_CHECK: ClassVar[int] = -100
-    TRUST_GOOD_CHECK: ClassVar[int] = 100
-    TRUST_KILLED_AT_NIGHT: ClassVar[int] = 25
-    TRUST_INJECTION_ATTACK_SYSTEM: ClassVar[int] = -25
-    TRUST_INJECTION_ATTACK_STATUS: ClassVar[int] = -15
-    TRUST_FALSE_QUOTATION: ClassVar[int] = -15
-    TRUST_LOGICAL_SPEECH: ClassVar[int] = 15
-    TRUST_VOTED_OUT: ClassVar[int] = -35
-    TRUST_ACCURATE_VOTING: ClassVar[int] = 8
-    TRUST_INACCURATE_VOTING: ClassVar[int] = -12
-    TRUST_ELECTED_SHERIFF: ClassVar[int] = 10
-    
-    # 游戏阶段配置
-    EARLY_GAME_MAX_DAY: ClassVar[int] = 2
-    MID_GAME_MAX_DAY: ClassVar[int] = 5
-    ENDGAME_ALIVE_THRESHOLD: ClassVar[int] = 5
-    
-    # ML配置
-    ML_INITIAL_CONFIDENCE: ClassVar[float] = 0.40
-    MAX_SPEECH_LENGTH: ClassVar[int] = 1400
+    def __post_init__(self):
+        """初始化后处理"""
+        if self.check_priority_weights is None:
+            self.check_priority_weights = {
+                # 最高优先级威胁
+                'malicious_injection': 98,
+                'fake_seer': 96,
+                'false_quotes': 95,
+                
+                # 高优先级可疑行为
+                'wolf_protecting_votes': 85,
+                'contradictions': 75,
+                'opposed_dead_good': 70,
+                'aggressive_bandwagon': 70,
+                
+                # 中优先级
+                'swing_votes': 60,
+                'defensive_behavior': 55,
+                
+                # 战略加成
+                'sheriff_bonus': 10,
+                'strong_speaker_bonus': 5,
+                'first_night_sheriff_candidate_bonus': 15,
+                
+                # 信任分数阈值
+                'trust_extreme_low': 20,  # <20 → 优先级90+
+                'trust_low': 40,  # <40 → 优先级70+
+            }
     
     def validate(self) -> bool:
         """
@@ -105,16 +96,26 @@ class SeerConfig(BaseConfig):
                 f"reveal_threshold must be >= 1, got {self.reveal_threshold}"
             )
         
-        # 验证发言长度
-        if self.min_speech_length <= 0:
+        if self.reveal_threshold > 10:
             raise ValueError(
-                f"min_speech_length must be positive, got {self.min_speech_length}"
+                f"reveal_threshold must be <= 10, got {self.reveal_threshold}"
             )
         
-        if self.max_speech_length <= self.min_speech_length:
-            raise ValueError(
-                f"max_speech_length ({self.max_speech_length}) must be greater than "
-                f"min_speech_length ({self.min_speech_length})"
-            )
+        # 验证检查优先级权重
+        if self.check_priority_weights:
+            required_keys = [
+                'malicious_injection', 'fake_seer', 'false_quotes',
+                'wolf_protecting_votes', 'contradictions'
+            ]
+            for key in required_keys:
+                if key not in self.check_priority_weights:
+                    raise ValueError(f"check_priority_weights missing required key: {key}")
+                
+                value = self.check_priority_weights[key]
+                if not isinstance(value, (int, float)):
+                    raise ValueError(f"check_priority_weights[{key}] must be numeric, got {type(value)}")
+                
+                if value < 0 or value > 100:
+                    raise ValueError(f"check_priority_weights[{key}] must be between 0 and 100, got {value}")
         
         return True

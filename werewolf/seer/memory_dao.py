@@ -106,6 +106,8 @@ class SeerMemoryDAO(BaseMemoryDAO):
             night: 检查的夜晚
         """
         checked = self.get_checked_players()
+        if checked is None:
+            checked = {}
         checked[player] = {"is_wolf": is_wolf, "night": night}
         self.set("checked_players", checked)
     

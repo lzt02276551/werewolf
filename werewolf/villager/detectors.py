@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-平民代理人检测器模块（企业级LLM增强版）
+平民代理人检测器模块（企业级LLM增强版 - 生产标准）
 实现各种检测功能：注入攻击、虚假引用、状态矛盾等
 
-设计原则：
-1. 优先使用LLM进行智能检测（准确度高）
-2. 提供规则检测作为备用方案（可靠性高）
+设计原则（企业级生产标准）：
+1. 仅使用LLM进行智能检测（准确度高）
+2. 不提供降级方案（失败时抛出异常）
 3. 统一的错误处理和日志记录
 4. 完整的类型提示和文档
 """
@@ -84,7 +84,7 @@ class LLMDetectorBase(BaseDetector):
 
 class InjectionDetector(LLMDetectorBase):
     """
-    注入攻击检测器（企业级LLM增强版）
+    注入攻击检测器（企业级LLM增强版 - 生产标准）
     
     功能：
     1. 检测系统消息伪造（SYSTEM_FORGERY）
@@ -92,9 +92,9 @@ class InjectionDetector(LLMDetectorBase):
     3. 检测状态矛盾（STATUS_CONTRADICTION）
     4. 识别良性分析行为（ANALYTICAL）
     
-    优先级：
-    - 优先使用LLM进行智能检测（准确度高）
-    - LLM失败时使用规则检测（可靠性高）
+    企业级生产标准：
+    - 仅使用LLM进行智能检测（准确度高）
+    - 不提供降级方案（失败时抛出异常）
     """
     
     def __init__(self, config: VillagerConfig, llm_client=None):
@@ -116,7 +116,7 @@ class InjectionDetector(LLMDetectorBase):
     @safe_execute(default_return=("CLEAN", "NORMAL", 0.0, 0))
     def detect(self, message: str, player_name: Optional[str] = None) -> Tuple[str, str, float, int]:
         """
-        检测注入攻击类型
+        检测注入攻击类型（企业级生产标准：仅使用LLM，无降级逻辑）
         
         Returns:
             (type, subtype, confidence, penalty)
@@ -132,12 +132,11 @@ class InjectionDetector(LLMDetectorBase):
         if not message.strip():
             return ("CLEAN", "EMPTY_MESSAGE", 0.0, 0)
         
-        # 如果有LLM客户端，使用LLM检测
-        if self.llm_client:
-            return self._detect_with_llm(message)
+        # 企业级生产标准：仅使用LLM检测，不降级
+        if not self.llm_client:
+            raise RuntimeError("LLM client is required for injection detection (no fallback in production)")
         
-        # 否则使用规则检测
-        return self._detect_with_rules(message)
+        return self._detect_with_llm(message)
     
     def _detect_with_llm(self, message: str) -> Tuple[str, str, float, int]:
         """
@@ -197,13 +196,12 @@ class InjectionDetector(LLMDetectorBase):
 - 普通发言是CLEAN（0分）
 - 置信度要准确反映判断的确定性"""
 
-            # 调用LLM API
+            # 调用LLM API（企业级生产标准：失败时抛出异常，不降级）
             result_text = self._call_llm(detection_prompt, temperature=0.2, max_tokens=300, timeout=10)
             
             if not result_text:
-                logger.warning("LLM returned empty response, using rule detection")
                 self.stats['llm_failures'] += 1
-                return self._detect_with_rules(message)
+                raise RuntimeError("LLM returned empty response for injection detection")
             
             logger.debug(f"[LLM Detection] Raw response: {result_text[:200]}")
             
@@ -286,6 +284,10 @@ class FalseQuoteDetector(LLMDetectorBase):
     def __init__(self, config: VillagerConfig, llm_client=None):
         super().__init__(config, llm_client)
         self.stats['false_quotes_found'] = 0
+        self.stats['total_detections'] = 0
+        self.stats['llm_detections'] = 0
+        self.stats['rule_detections'] = 0
+        self.stats['llm_failures'] = 0
         logger.info(f"✓ FalseQuoteDetector initialized (LLM: {self.llm_client is not None}, Model: {self.detection_model})")
     
     def _get_default_result(self) -> Dict[str, Any]:
@@ -317,12 +319,11 @@ class FalseQuoteDetector(LLMDetectorBase):
             logger.warning(f"Invalid history type: {type(history)}")
             return False, 0.0, {}
         
-        # 如果有LLM客户端，使用LLM检测
-        if self.llm_client:
-            return self._detect_with_llm(player_name, message, history)
+        # 企业级生产标准：仅使用LLM检测，不降级
+        if not self.llm_client:
+            raise RuntimeError("LLM client is required for false quote detection (no fallback in production)")
         
-        # 否则使用规则检测
-        return self._detect_with_rules(player_name, message, history)
+        return self._detect_with_llm(player_name, message, history)
     
     def _detect_with_llm(self, player_name: str, message: str, history: List) -> Tuple[bool, float, Dict]:
         """
@@ -548,6 +549,10 @@ class MessageParser(LLMDetectorBase):
     
     def __init__(self, config: VillagerConfig, llm_client=None):
         super().__init__(config, llm_client)
+        self.stats['total_parses'] = 0
+        self.stats['llm_parses'] = 0
+        self.stats['rule_parses'] = 0
+        self.stats['llm_failures'] = 0
         logger.info(f"✓ MessageParser initialized (LLM: {self.llm_client is not None}, Model: {self.detection_model})")
     
     def _get_default_result(self) -> Dict[str, Any]:
@@ -786,6 +791,10 @@ class SpeechQualityEvaluator(LLMDetectorBase):
     
     def __init__(self, config: VillagerConfig, llm_client=None):
         super().__init__(config, llm_client)
+        self.stats['total_evaluations'] = 0
+        self.stats['llm_evaluations'] = 0
+        self.stats['rule_evaluations'] = 0
+        self.stats['llm_failures'] = 0
         logger.info(f"✓ SpeechQualityEvaluator initialized (LLM: {self.llm_client is not None}, Model: {self.detection_model})")
     
     def _get_default_result(self) -> Dict[str, Any]:

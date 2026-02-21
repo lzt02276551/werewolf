@@ -19,6 +19,13 @@ from agent_build_sdk.sdk.role_agent import BasicRoleAgent
 from agent_build_sdk.utils.logger import logger
 from werewolf.core.base_good_config import BaseGoodConfig
 
+# 加载环境变量
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    logger.debug("python-dotenv not installed, skipping .env file loading")
+
 # ML Enhancement Integration
 try:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -118,7 +125,7 @@ class BaseGoodAgent(BasicRoleAgent):
         self.memory.set_variable("alive_players", [])
         self.memory.set_variable("dead_players", [])
         self.memory.set_variable("game_data_collected", [])
-        self.memory.set_variable("game_result", None)
+        self.memory.set_variable("game_result", "")  # 初始化为空字符串而非None
         self.memory.set_variable("giving_last_words", False)
         self.memory.set_variable("sheriff", None)
     
@@ -135,7 +142,7 @@ class BaseGoodAgent(BasicRoleAgent):
         detection_model = os.getenv('DETECTION_MODEL_NAME')
         
         if not detection_model:
-            logger.warning("⚠️ 未配置DETECTION_MODEL_NAME，将使用主模型进行分析")
+            logger.info("ℹ️ 未配置DETECTION_MODEL_NAME，将使用主模型进行分析（单模型模式）")
             return (getattr(self, 'client', None), self.model_name)
         
         try:
@@ -146,7 +153,7 @@ class BaseGoodAgent(BasicRoleAgent):
             base_url = os.getenv('DETECTION_BASE_URL') or os.getenv('OPENAI_BASE_URL')
             
             if not api_key or not base_url:
-                logger.warning("⚠️ 检测模型API未配置，将使用主模型")
+                logger.info("ℹ️ 检测模型API未配置，将使用主模型（单模型模式）")
                 return (getattr(self, 'client', None), self.model_name)
             
             # 创建检测专用客户端
@@ -241,99 +248,20 @@ class BaseGoodAgent(BasicRoleAgent):
             logger.error(f"✗ 增强决策引擎初始化失败: {e}", exc_info=True)
             self.enhanced_decision_engine = None
         
-        # LLM检测器 - 使用新的llm_detectors模块（替代硬编码规则）
-        try:
-            from werewolf.core.llm_detectors import create_llm_detectors
-            
-            # 创建所有LLM检测器
-            detectors = create_llm_detectors(self.detection_client, self.detection_model)
-            
-            self.injection_detector = detectors['injection']
-            self.false_quote_detector = detectors['false_quote']
-            self.speech_quality_evaluator = detectors['speech_quality']
-            self.message_parser = detectors['message_parser']
-            
-            logger.info("✓ LLM检测器已初始化（舍弃硬编码规则）")
-        except ImportError as e:
-            logger.error(f"✗ 无法导入LLM检测器: {e}")
-            self._init_fallback_detectors()
-        except KeyError as e:
-            logger.error(f"✗ LLM检测器缺少必要组件: {e}")
-            self._init_fallback_detectors()
-        except Exception as e:
-            logger.error(f"✗ LLM检测器初始化失败: {e}", exc_info=True)
-            self._init_fallback_detectors()
-    
-    def _init_fallback_detectors(self):
-        """初始化降级检测器（多层降级策略）"""
-        # 第一层降级：尝试使用旧版检测器
-        try:
-            from werewolf.villager.detectors import (
-                InjectionDetector, FalseQuoteDetector, 
-                MessageParser, SpeechQualityEvaluator
-            )
-            
-            self.injection_detector = InjectionDetector(self.config, self.detection_client)
-            self.false_quote_detector = FalseQuoteDetector(self.config, self.detection_client)
-            self.message_parser = MessageParser(self.config, self.detection_client)
-            self.speech_quality_evaluator = SpeechQualityEvaluator(self.config, self.detection_client)
-            
-            logger.warning("⚠ 使用旧版检测器（第一层降级）")
-            return
-        except ImportError as e:
-            logger.error(f"✗ 无法导入旧版检测器: {e}")
-        except TypeError as e:
-            logger.error(f"✗ 旧版检测器初始化参数错误: {e}")
-        except Exception as e:
-            logger.error(f"✗ 旧版检测器初始化失败: {e}")
+        # LLM检测器 - 使用新的llm_detectors模块（企业级生产标准：无降级逻辑）
+        from werewolf.core.llm_detectors import create_llm_detectors
         
-        # 第二层降级：尝试使用简化版检测器（不依赖LLM）
-        try:
-            from werewolf.common.detectors import (
-                SimpleInjectionDetector, SimpleFalseQuoteDetector,
-                SimpleMessageParser, SimpleSpeechQualityEvaluator
-            )
-            
-            self.injection_detector = SimpleInjectionDetector()
-            self.false_quote_detector = SimpleFalseQuoteDetector()
-            self.message_parser = SimpleMessageParser()
-            self.speech_quality_evaluator = SimpleSpeechQualityEvaluator()
-            
-            logger.warning("⚠ 使用简化版检测器（第二层降级，无LLM）")
-            return
-        except ImportError as e:
-            logger.error(f"✗ 无法导入简化版检测器: {e}")
-        except Exception as e:
-            logger.error(f"✗ 简化版检测器初始化失败: {e}")
+        # 创建所有LLM检测器
+        detectors = create_llm_detectors(self.detection_client, self.detection_model)
         
-        # 第三层降级：使用最小功能的占位符
-        logger.error("✗ 所有降级方案都失败，使用占位符检测器")
-        self._init_placeholder_detectors()
-    
-    def _init_placeholder_detectors(self):
-        """初始化占位符检测器（最小功能）"""
-        class PlaceholderDetector:
-            """占位符检测器 - 总是返回安全的默认值"""
-            def detect(self, *args, **kwargs):
-                return False
-            
-            def analyze(self, *args, **kwargs):
-                return {}
-            
-            def parse(self, *args, **kwargs):
-                return {}
-            
-            def evaluate(self, *args, **kwargs):
-                return 0.5
+        self.injection_detector = detectors['injection']
+        self.false_quote_detector = detectors['false_quote']
+        self.speech_quality_evaluator = detectors['speech_quality']
+        self.message_parser = detectors['message_parser']
         
-        self.injection_detector = PlaceholderDetector()
-        self.false_quote_detector = PlaceholderDetector()
-        self.message_parser = PlaceholderDetector()
-        self.speech_quality_evaluator = PlaceholderDetector()
+        logger.info("✓ LLM检测器已初始化（企业级生产标准）")
         
-        logger.warning("⚠ 使用占位符检测器（最小功能模式）")
-        
-        # 分析器 - 使用平民的实现作为默认实现
+        # 分析器 - 使用平民的实现作为默认实现（必须初始化，不管检测器是否成功）
         try:
             from werewolf.villager.analyzers import (
                 TrustScoreManager, TrustScoreCalculator,
@@ -365,7 +293,7 @@ class BaseGoodAgent(BasicRoleAgent):
             self.voting_pattern_analyzer = None
             self.game_phase_analyzer = None
         
-        # 决策器 - 使用平民的实现作为默认实现
+        # 决策器 - 使用平民的实现作为默认实现（必须初始化，不管检测器是否成功）
         try:
             from werewolf.villager.decision_makers import (
                 VoteDecisionMaker, SheriffElectionDecisionMaker,
@@ -397,6 +325,7 @@ class BaseGoodAgent(BasicRoleAgent):
             self.sheriff_election_decision_maker = None
             self.sheriff_vote_decision_maker = None
     
+    
     def _init_specific_components(self):
         """
         初始化角色特有组件（钩子方法）
@@ -422,7 +351,7 @@ class BaseGoodAgent(BasicRoleAgent):
         - 虚假引用检测（LLM驱动）
         - 消息解析（LLM驱动）
         - 发言质量评估（LLM驱动）
-        - 更新信任分数
+        - 更新信任分数（带置信度和来源可靠性）
         
         Args:
             message: 玩家消息
@@ -447,14 +376,26 @@ class BaseGoodAgent(BasicRoleAgent):
                     player_data[player_name]["injection_confidence"] = confidence
                     player_data[player_name]["injection_attempts"] = player_data[player_name].get("injection_attempts", 0) + 1
                     
-                    # 根据类型计算信任惩罚
+                    # 根据类型计算信任惩罚（使用置信度和来源可靠性）
                     penalty_map = {
                         'SYSTEM_FAKE': self.config.TRUST_INJECTION_ATTACK_SYSTEM,
                         'STATUS_FAKE': self.config.TRUST_INJECTION_ATTACK_STATUS,
                         'ROLE_FAKE': -30
                     }
                     penalty = penalty_map.get(injection_type, -20)
-                    player_data[player_name]["trust_penalty"] = player_data[player_name].get("trust_penalty", 0) + penalty
+                    
+                    # 使用信任管理器更新分数（带置信度）
+                    if hasattr(self, 'trust_manager') and self.trust_manager:
+                        self.trust_manager.update_score(
+                            player_name, 
+                            penalty, 
+                            f"Injection attack: {injection_type}",
+                            confidence=confidence,  # LLM检测的置信度
+                            source_reliability=0.9  # LLM检测器的可靠性
+                        )
+                    else:
+                        # 降级：直接记录惩罚
+                        player_data[player_name]["trust_penalty"] = player_data[player_name].get("trust_penalty", 0) + penalty
                     
                     logger.warning(f"[LLM注入检测] {player_name}: {injection_type} (置信度: {confidence:.2f}, 原因: {reason})")
                     
@@ -475,7 +416,19 @@ class BaseGoodAgent(BasicRoleAgent):
                     if confidence > 0.6:
                         player_data[player_name]["false_quotes"] = player_data[player_name].get("false_quotes", 0) + 1
                         player_data[player_name]["false_quote_confidence"] = confidence
-                        player_data[player_name]["trust_penalty"] = player_data[player_name].get("trust_penalty", 0) + self.config.TRUST_FALSE_QUOTATION
+                        
+                        # 使用信任管理器更新分数（带置信度）
+                        if hasattr(self, 'trust_manager') and self.trust_manager:
+                            self.trust_manager.update_score(
+                                player_name,
+                                self.config.TRUST_FALSE_QUOTATION,
+                                "False quotation detected",
+                                confidence=confidence,  # LLM检测的置信度
+                                source_reliability=0.85  # 虚假引用检测的可靠性略低
+                            )
+                        else:
+                            # 降级：直接记录惩罚
+                            player_data[player_name]["trust_penalty"] = player_data[player_name].get("trust_penalty", 0) + self.config.TRUST_FALSE_QUOTATION
                         
                         logger.warning(f"[LLM虚假引用检测] {player_name}: 置信度 {confidence:.2f}")
                         
@@ -548,11 +501,32 @@ class BaseGoodAgent(BasicRoleAgent):
                     'strategy_score': result.get('strategy_score', 50),
                 }
                 
+                # 根据发言质量更新信任分数（带置信度）
                 if overall_score >= 70:
                     player_data[player_name]["logical_speech"] = True
+                    if hasattr(self, 'trust_manager') and self.trust_manager:
+                        # 高质量发言增加信任
+                        quality_bonus = (overall_score - 70) / 30 * self.config.TRUST_LOGICAL_SPEECH
+                        self.trust_manager.update_score(
+                            player_name,
+                            quality_bonus,
+                            f"High quality speech (score: {overall_score})",
+                            confidence=0.7,  # 发言质量评估的置信度中等
+                            source_reliability=0.8  # LLM评估的可靠性
+                        )
                     logger.info(f"[LLM质量评估] {player_name}: 高质量发言 ({overall_score}分)")
                 elif overall_score < 30:
                     player_data[player_name]["low_quality_speech"] = True
+                    if hasattr(self, 'trust_manager') and self.trust_manager:
+                        # 低质量发言降低信任
+                        quality_penalty = (30 - overall_score) / 30 * (-5)
+                        self.trust_manager.update_score(
+                            player_name,
+                            quality_penalty,
+                            f"Low quality speech (score: {overall_score})",
+                            confidence=0.6,  # 低质量判断的置信度略低
+                            source_reliability=0.75
+                        )
                     logger.info(f"[LLM质量评估] {player_name}: 低质量发言 ({overall_score}分)")
                     
             except (ValueError, KeyError, TypeError) as e:
@@ -643,8 +617,7 @@ class BaseGoodAgent(BasicRoleAgent):
             投票目标
         """
         if not candidates:
-            logger.warning("候选人列表为空，无法做出投票决策")
-            return ""
+            raise ValueError("候选人列表为空，无法做出投票决策")
             
         trust_scores = self.memory.load_variable("trust_scores")
         if not trust_scores:
@@ -725,13 +698,22 @@ class BaseGoodAgent(BasicRoleAgent):
             验证后的玩家名称
         """
         if not valid_choices:
-            logger.error("有效选择列表为空")
+            logger.error("有效选择列表为空，无法验证玩家名称")
             return ""
-            
-        if output in valid_choices:
-            return output
         
-        logger.warning(f"LLM output '{output}' not in valid choices: {valid_choices}")
+        # 清理输出（去除空格和换行）
+        cleaned_output = output.strip() if isinstance(output, str) else ""
+        
+        if cleaned_output in valid_choices:
+            return cleaned_output
+        
+        # 尝试模糊匹配（处理LLM可能的格式变化）
+        for choice in valid_choices:
+            if choice in cleaned_output or cleaned_output in choice:
+                logger.info(f"模糊匹配成功: '{cleaned_output}' -> '{choice}'")
+                return choice
+        
+        logger.warning(f"LLM output '{cleaned_output}' not in valid choices: {valid_choices}, using first choice")
         return valid_choices[0]
     
     def _extract_player_names(self, text: str) -> List[str]:

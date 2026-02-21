@@ -17,19 +17,6 @@ from typing import Dict, List, Tuple, Optional, Any
 from agent_build_sdk.utils.logger import logger
 
 
-def safe_execute(default_return=None):
-    """装饰器：安全执行函数，捕获异常并返回默认值"""
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                logger.error(f"Error in {func.__name__}: {e}")
-                return default_return if default_return is not None else None
-        return wrapper
-    return decorator
-
-
 class MemoryDAO(BaseMemoryDAO):
     """
     Hunter专用的内存数据访问对象
@@ -275,7 +262,6 @@ class WolfProbabilityCalculator:
         self.speech_evaluator = speech_evaluator
         self.memory_dao = memory_dao
     
-    @safe_execute(default_return=0.5)
     def calculate(self, player_name: str, game_phase: str = "mid") -> float:
         """
         计算狼人概率（0.0-1.0）
@@ -287,6 +273,9 @@ class WolfProbabilityCalculator:
         Returns:
             狼人概率
         """
+        # 验证输入
+        if not player_name or not isinstance(player_name, str):
+            raise ValueError(f"Invalid player_name: {player_name}")
         # Component 1: 信任分数（基础权重35%）
         trust_scores = self.memory_dao.get_trust_scores()
         trust_score = trust_scores.get(player_name, 50)

@@ -210,13 +210,16 @@ class WolfDecisionEngine(BaseDecisionMaker):
         Returns:
             威胁加成分数
         """
+        # 默认威胁等级
+        default_threat = 50
+        
         role_bonuses = {
-            "seer": self.config.ROLE_THREAT_SEER - self.config.trust_score_default,
-            "likely_seer": self.config.ROLE_THREAT_LIKELY_SEER - self.config.trust_score_default,
-            "witch": self.config.ROLE_THREAT_WITCH - self.config.trust_score_default,
-            "guard": self.config.ROLE_THREAT_GUARD - self.config.trust_score_default,
-            "strong_villager": self.config.ROLE_THREAT_STRONG_VILLAGER - self.config.trust_score_default,
-            "hunter": self.config.ROLE_THREAT_HUNTER - self.config.trust_score_default,
+            "seer": self.config.ROLE_THREAT_SEER - default_threat,
+            "likely_seer": self.config.ROLE_THREAT_LIKELY_SEER - default_threat,
+            "witch": self.config.ROLE_THREAT_WITCH - default_threat,
+            "guard": self.config.ROLE_THREAT_GUARD - default_threat,
+            "strong_villager": self.config.ROLE_THREAT_STRONG_VILLAGER - default_threat,
+            "hunter": self.config.ROLE_THREAT_HUNTER - default_threat,
         }
         return role_bonuses.get(role, 0)
     

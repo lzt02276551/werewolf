@@ -23,11 +23,21 @@ from agent_build_sdk.model.werewolf_model import (
 from agent_build_sdk.utils.logger import logger
 from agent_build_sdk.sdk.agent import format_prompt
 from werewolf.core.base_good_agent import BaseGoodAgent
-from werewolf.hunter.prompt import DESC_PROMPT, LAST_WORDS_PROMPT
+from werewolf.hunter.prompt import (
+    DESC_PROMPT, 
+    VOTE_PROMPT,
+    SKILL_PROMPT,
+    SHERIFF_ELECTION_PROMPT,
+    SHERIFF_SPEECH_PROMPT,
+    SHERIFF_VOTE_PROMPT,
+    SHERIFF_PK_PROMPT,
+    SHERIFF_SPEECH_ORDER_PROMPT,
+    SHERIFF_TRANSFER_PROMPT,
+    LAST_WORDS_PROMPT
+)
 from werewolf.hunter.decision_makers import ShootDecisionMaker
 from werewolf.hunter.analyzers import (
-    ThreatLevelAnalyzer, WolfProbabilityCalculator,
-    TrustScoreAnalyzer, VotingPatternAnalyzer, SpeechQualityAnalyzer
+    ThreatLevelAnalyzer, WolfProbabilityCalculator
 )
 from typing import List, Optional
 
@@ -53,13 +63,21 @@ class HunterAgent(BaseGoodAgent):
     - 复仇模式
     """
 
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str = None):
         """
         初始化猎人代理
         
         Args:
-            model_name: LLM模型名称
+            model_name: LLM模型名称（可选）
+                       如果不提供，将从环境变量 MODEL_NAME 读取
+                       如果环境变量也没有，默认使用 "deepseek-chat"
         """
+        # 如果没有提供model_name，从环境变量读取
+        if model_name is None:
+            import os
+            model_name = os.getenv('MODEL_NAME', 'deepseek-chat')
+            logger.info(f"Using model from environment: {model_name}")
+        
         # 调用父类初始化（自动初始化所有共享组件）
         super().__init__(ROLE_HUNTER, model_name=model_name)
         
@@ -94,29 +112,36 @@ class HunterAgent(BaseGoodAgent):
         猎人特有组件：
         - ShootDecisionMaker: 开枪决策器
         - ThreatLevelAnalyzer: 威胁等级分析器
-        - WolfProbabilityCalculator: 狼人概率计算器
+        - WolfProbabilityCalculator: 狼人概率计算器（使用父类的分析器）
         """
         try:
-            # 创建猎人特有的分析器
+            # 创建猎人特有的MemoryDAO
             from werewolf.hunter.analyzers import MemoryDAO
             
             self.hunter_memory_dao = MemoryDAO(self.memory)
             self.cache_manager = CacheManager()
             
-            # 创建猎人特有的分析器（复用父类的基础分析器）
-            self.hunter_trust_analyzer = TrustScoreAnalyzer(self.config, self.hunter_memory_dao)
-            self.hunter_voting_analyzer = VotingPatternAnalyzer(self.config, self.hunter_memory_dao)
-            self.hunter_speech_analyzer = SpeechQualityAnalyzer(self.config, self.hunter_memory_dao)
-            
             # 创建猎人特有的高级分析器
             self.threat_analyzer = ThreatLevelAnalyzer(
                 self.config, self.hunter_memory_dao, self.cache_manager
             )
+            
+            # 验证父类分析器已初始化（必须存在）
+            if not hasattr(self, 'trust_score_calculator') or self.trust_score_calculator is None:
+                raise RuntimeError("Parent analyzers not initialized - trust_score_calculator is required")
+            
+            if not hasattr(self, 'voting_pattern_analyzer') or self.voting_pattern_analyzer is None:
+                raise RuntimeError("Parent analyzers not initialized - voting_pattern_analyzer is required")
+            
+            if not hasattr(self, 'speech_quality_evaluator') or self.speech_quality_evaluator is None:
+                raise RuntimeError("Parent analyzers not initialized - speech_quality_evaluator is required")
+            
+            # 创建WolfProbabilityCalculator，传入分析器
             self.wolf_prob_calculator = WolfProbabilityCalculator(
                 self.config,
-                self.hunter_trust_analyzer,
-                self.hunter_voting_analyzer,
-                self.hunter_speech_analyzer,
+                self.trust_score_calculator,
+                self.voting_pattern_analyzer,
+                self.speech_quality_evaluator,
                 self.hunter_memory_dao
             )
             
@@ -150,9 +175,54 @@ class HunterAgent(BaseGoodAgent):
         # 猎人特有事件：技能使用（开枪）
         if req.status == STATUS_SKILL:
             return self._handle_shoot_skill(req)
-        else:
-            # 其他事件使用父类处理
+        
+        # 处理讨论阶段的消息（包含注入检测、虚假引用检测等）
+        if req.status == STATUS_DISCUSS and req.name:
+            # 检查是否是遗言阶段（使用统一的遗言检测方法）
+            if self._is_last_words_phase(req):
+                my_name = self.memory.load_variable("name")
+                if req.name == my_name:
+                    self.memory.set_variable("giving_last_words", True)
+                    logger.info("[LAST WORDS] Hunter is being eliminated, preparing final words")
+            
+            # 使用基类的消息处理方法（包含注入检测、虚假引用检测、消息解析、发言质量评估）
+            self._process_player_message(req.message, req.name)
+        
+        # 其他事件使用父类处理（如果父类有perceive方法）
+        try:
             return super().perceive(req)
+        except AttributeError:
+            # 如果父类没有perceive方法，返回默认响应
+            return AgentResp(success=True, result="", errMsg=None)
+    
+    def _is_last_words_phase(self, req: AgentReq) -> bool:
+        """
+        统一的遗言阶段检测方法
+        
+        遗言阶段的特征：
+        1. 消息中包含 "last words", "final words", "遗言" 等关键词
+        2. 消息中包含 "leaves their last words" 等短语
+        3. 玩家名称后跟 "Last Words:" 或 "遗言："
+        
+        Args:
+            req: 游戏事件请求
+            
+        Returns:
+            是否是遗言阶段
+        """
+        if not req or not req.message:
+            return False
+        
+        message_lower = req.message.lower()
+        
+        # 关键词检测
+        last_words_keywords = [
+            "last words", "final words", "遗言",
+            "leaves their last words", "leaves his last words", "leaves her last words",
+            "'s last words", "最后的话"
+        ]
+        
+        return any(keyword in message_lower for keyword in last_words_keywords)
     
     def _handle_shoot_skill(self, req: AgentReq) -> AgentResp:
         """
@@ -200,7 +270,14 @@ class HunterAgent(BaseGoodAgent):
     
     def _make_shoot_decision(self, candidates: List[str]) -> str:
         """
-        开枪决策
+        开枪决策（与SKILL_PROMPT中的决策树一致）
+        
+        决策流程：
+        1. 候选人过滤（排除自己、已死亡、高信任度玩家）
+        2. 狼人概率计算（信任分数、投票历史、发言逻辑、死亡关联）
+        3. 特殊情况处理（预言家查杀、假预言家、错误投票、狼王嫌疑）
+        4. 开枪优先级评分（狼人概率 × 100 + 威胁等级 × 50）
+        5. 开枪或放弃决策（分数≥70开枪，<50放弃，默认开枪）
         
         Args:
             candidates: 候选玩家列表
@@ -211,39 +288,37 @@ class HunterAgent(BaseGoodAgent):
         if not candidates:
             return "Do Not Shoot"
         
-        try:
-            # 使用决策器
-            if self.shoot_decision_maker:
-                my_name = self.memory.load_variable("name") or ""
-                game_state = self.memory.load_variable("game_state") or {}
-                current_day = game_state.get("current_day", 1)
-                alive_players = self.memory.load_variable("alive_players") or []
-                alive_count = len(alive_players)
-                
-                # 评估游戏阶段
-                if current_day <= 2:
-                    game_phase = "early"
-                elif current_day >= 6:
-                    game_phase = "late"
-                else:
-                    game_phase = "mid"
-                
-                target, reason, scores = self.shoot_decision_maker.decide(
-                    candidates, 
-                    my_name,
-                    game_phase,
-                    current_day,
-                    alive_count
-                )
-                logger.info(f"[SHOOT DECISION] Target: {target}, Reason: {reason}")
-                return target
-            
-            # 降级：不开枪
-            return "Do Not Shoot"
-            
-        except Exception as e:
-            logger.error(f"Error in shoot decision: {e}")
-            return "Do Not Shoot"
+        # 验证决策器存在（必须）
+        if not self.shoot_decision_maker:
+            raise RuntimeError("Shoot decision maker not initialized - cannot make shoot decision")
+        
+        my_name = self.memory.load_variable("name") or ""
+        game_state = self.memory.load_variable("game_state") or {}
+        current_day = game_state.get("current_day", 1)
+        alive_players = self.memory.load_variable("alive_players") or []
+        alive_count = len(alive_players)
+        
+        # 评估游戏阶段（与提示词一致）
+        if current_day <= 2:
+            game_phase = "early"
+        elif current_day >= 6 or alive_count <= 6:
+            game_phase = "late"
+        else:
+            game_phase = "mid"
+        
+        # 执行决策
+        target, reason, scores = self.shoot_decision_maker.decide(
+            candidates, 
+            my_name,
+            game_phase,
+            current_day,
+            alive_count
+        )
+        
+        logger.info(f"[SHOOT DECISION] Target: {target}, Reason: {reason}, Phase: {game_phase}")
+        logger.info(f"[SHOOT DECISION] All scores: {scores}")
+        
+        return target
     
     # ==================== 交互方法（使用父类方法）====================
     
@@ -265,6 +340,18 @@ class HunterAgent(BaseGoodAgent):
             return self._interact_vote(req)
         elif req.status == STATUS_RESULT:
             return self._handle_game_result(req)
+        elif req.status == "sheriff_election":
+            return self._interact_sheriff_election(req)
+        elif req.status == "sheriff_speech":
+            return self._interact_sheriff_speech(req)
+        elif req.status == "sheriff_vote":
+            return self._interact_sheriff_vote(req)
+        elif req.status == "sheriff_pk":
+            return self._interact_sheriff_pk(req)
+        elif req.status == "sheriff_speech_order":
+            return self._interact_sheriff_speech_order(req)
+        elif req.status == "sheriff_transfer":
+            return self._interact_sheriff_transfer(req)
         else:
             # 未知状态，返回默认响应
             logger.warning(f"[HUNTER INTERACT] Unknown status: {req.status}, returning default response")
@@ -274,67 +361,360 @@ class HunterAgent(BaseGoodAgent):
         """
         处理讨论阶段的发言（使用父类的LLM生成方法）
         
+        发言策略（与DESC_PROMPT中的决策树一致）：
+        - Early Game (Day 1-3): 保持隐藏，以强力平民身份发言
+        - Mid Game (Day 4-6): 考虑暗示能力，创造威慑
+        - Late Game (Day 7+, ≤6人): 必须暴露身份，建立信任和领导力
+        
         Args:
             req: 讨论请求
             
         Returns:
             AgentResp: 发言内容
         """
-        # 处理其他玩家的发言
-        if hasattr(req, 'history') and req.history:
-            for msg in req.history:
-                if msg.startswith("No.") and ":" in msg:
-                    parts = msg.split(":", 1)
-                    if len(parts) == 2:
-                        player_name = parts[0].strip()
-                        message = parts[1].strip()
-                        my_name = self.memory.load_variable("name")
-                        if player_name != my_name:
-                            self._process_player_message(message, player_name)
-        
         # 检查是否是遗言阶段
         message = str(req.message or "")
         if "last words" in message.lower() or "遗言" in message:
             return self._generate_last_words()
         
-        # 使用父类的LLM生成方法
-        context = self._build_context()
-        can_shoot = self.memory.load_variable("can_shoot")
-        shoot_info = "can shoot" if can_shoot else "already shot"
+        # 构建prompt参数
+        try:
+            # 获取基本信息
+            my_name = self.memory.load_variable("name") or "Unknown"
+            alive_players = self.memory.load_variable("alive_players") or []
+            current_day = self._get_current_day()
+            
+            # 获取开枪信息（简化版，不透露过多）
+            can_shoot = self.memory.load_variable("can_shoot")
+            shot_used = self.memory.load_variable("shot_used")
+            shoot_target = self.memory.load_variable("shoot_target")
+            
+            shoot_info = self._format_shoot_info_simple(shot_used, shoot_target, can_shoot)
+            
+            # 确定游戏阶段和策略（与提示词决策树一致）
+            game_phase, phase_strategy = self._determine_game_phase(current_day, len(alive_players))
+            
+            # 获取注入攻击嫌疑人（需要在发言中纠正）
+            injection_suspects = self._get_injection_suspects()
+            
+            # 构建历史记录
+            speech_history = self.memory.load_variable("speech_history") or {}
+            history_str = self._format_history(speech_history, max_entries=10)
+            
+            # 格式化prompt（使用DESC_PROMPT）
+            prompt = format_prompt(DESC_PROMPT, {
+                "history": history_str,
+                "name": my_name,
+                "shoot_info": shoot_info,
+                "injection_suspects": injection_suspects
+            })
+            
+            result = self._llm_generate(prompt)
+            result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
+            
+            logger.info(f"[HUNTER DISCUSS] Generated speech (length: {len(result)}, phase: {game_phase})")
+            return AgentResp(success=True, result=result, errMsg=None)
+            
+        except Exception as e:
+            logger.error(f"[HUNTER DISCUSS] Error generating speech: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"Failed to generate discussion speech: {e}")
+    
+    def _get_current_day(self) -> int:
+        """
+        获取当前天数
         
-        prompt = format_prompt(DESC_PROMPT, {
-            "history": "\n".join(req.history) if hasattr(req, 'history') else "",
-            "name": self.memory.load_variable("name"),
-            "shoot_info": shoot_info
-        })
+        Returns:
+            当前天数（默认为1）
+        """
+        # 优先使用day_count
+        day_count = self.memory.load_variable("day_count")
+        if day_count and isinstance(day_count, int) and day_count > 0:
+            return day_count
         
-        result = self._llm_generate(prompt)
-        result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
+        # 回退到game_state
+        game_state = self.memory.load_variable("game_state") or {}
+        current_day = game_state.get("current_day", 1)
         
-        logger.info(f"[HUNTER DISCUSS] Generated speech (length: {len(result)})")
-        return AgentResp(success=True, result=result, errMsg=None)
+        # 确保返回有效值
+        if isinstance(current_day, int) and current_day > 0:
+            return current_day
+        
+        return 1
+    
+    def _format_shoot_info_simple(
+        self, 
+        shot_used: bool, 
+        shoot_target: Optional[str], 
+        can_shoot: bool
+    ) -> str:
+        """
+        简单格式化开枪信息（用于讨论阶段）
+        
+        注意：不要在讨论阶段透露过多信息，保持神秘感
+        
+        Args:
+            shot_used: 是否已使用开枪
+            shoot_target: 开枪目标
+            can_shoot: 是否可以开枪
+            
+        Returns:
+            格式化的开枪信息字符串
+        """
+        if shot_used and shoot_target:
+            # 已经开枪，但不透露目标（除非在遗言阶段）
+            return "Already used shooting ability"
+        elif can_shoot:
+            # 还可以开枪，保持威慑力
+            return "Can still shoot (deterrence active)"
+        else:
+            # 不能开枪（被毒或已使用）
+            return "Cannot shoot (poisoned or already used)"
+    
+    def _get_injection_suspects(self) -> str:
+        """
+        获取注入攻击嫌疑人列表
+        
+        Returns:
+            格式化的嫌疑人字符串
+        """
+        player_data = self.memory.load_variable("player_data") or {}
+        injection_suspects = {}
+        
+        for player, data in player_data.items():
+            if isinstance(data, dict) and data.get("malicious_injection"):
+                injection_type = data.get("injection_type", "UNKNOWN")
+                injection_suspects[player] = injection_type
+        
+        return ", ".join([f"{p}({t})" for p, t in injection_suspects.items()]) if injection_suspects else "None"
+    
+    def _determine_game_phase(self, current_day: int, alive_count: int) -> tuple:
+        """
+        确定游戏阶段和策略（与提示词中的决策树一致）
+        
+        游戏阶段划分：
+        - Early Game: Day 1-3, 10-12人存活 - 保持隐藏
+        - Mid Game: Day 4-6, 7-9人存活 - 考虑暗示
+        - Late Game: Day 7+, ≤6人存活 - 必须暴露
+        
+        Args:
+            current_day: 当前天数
+            alive_count: 存活人数
+            
+        Returns:
+            (游戏阶段, 阶段策略)
+        """
+        # 晚期游戏：天数>=6 或 存活人数<=6
+        if current_day >= self.config.late_game_day_threshold or alive_count <= self.config.critical_alive_threshold:
+            return (
+                "Late Game", 
+                "REVEAL identity immediately - establish trust and leadership, warn wolves of retaliation"
+            )
+        
+        # 早期游戏：天数<=3
+        elif current_day <= self.config.early_game_reveal_threshold:
+            return (
+                "Early Game", 
+                "STAY HIDDEN - speak as strong villager, avoid revealing Hunter role, become bait for wolves"
+            )
+        
+        # 中期游戏：天数4-5
+        else:
+            return (
+                "Mid Game", 
+                "CONSIDER revealing - subtle hints like 'I have backup', create deterrence without full reveal"
+            )
     
     def _generate_last_words(self) -> AgentResp:
         """
         生成遗言（使用父类的LLM生成方法）
         
+        猎人的遗言必须包含（与LAST_WORDS_PROMPT一致）：
+        1. 身份确认（"I am the Hunter"）
+        2. 开枪决策说明（详细解释为什么射击或不射击）
+        3. 淘汰分析（谁推动了投票，为什么被淘汰）
+        4. 嫌疑人指导（剩余嫌疑人列表和推荐目标）
+        5. 战略建议（帮助好人阵营获胜）
+        
         Returns:
             AgentResp: 遗言内容
         """
-        context = self._build_context()
-        can_shoot = self.memory.load_variable("can_shoot")
-        shoot_info = "can shoot" if can_shoot else "already shot"
+        try:
+            # 获取基本信息
+            my_name = self.memory.load_variable("name") or "Unknown"
+            alive_players = self.memory.load_variable("alive_players") or []
+            
+            # 获取开枪历史和状态
+            shoot_history = self.memory.load_variable("shoot_history") or []
+            shot_used = self.memory.load_variable("shot_used")
+            shoot_target = self.memory.load_variable("shoot_target")
+            can_shoot = self.memory.load_variable("can_shoot")
+            
+            # 详细格式化开枪信息（用于遗言）
+            shoot_info = self._format_shoot_info_detailed(
+                shot_used, shoot_target, can_shoot, shoot_history
+            )
+            
+            # 构建历史记录（包含完整的游戏历史）
+            speech_history = self.memory.load_variable("speech_history") or {}
+            history_str = self._format_history(speech_history, max_entries=15)  # 遗言阶段需要更多历史
+            
+            # 格式化prompt（使用LAST_WORDS_PROMPT）
+            prompt = format_prompt(LAST_WORDS_PROMPT, {
+                "history": history_str,
+                "shoot_info": shoot_info
+            })
+            
+            result = self._llm_generate(prompt)
+            result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
+            
+            logger.info(f"[HUNTER LAST WORDS] Generated (length: {len(result)})")
+            logger.info(f"[HUNTER LAST WORDS] Shoot info: {shoot_info}")
+            return AgentResp(success=True, result=result, errMsg=None)
+            
+        except Exception as e:
+            logger.error(f"[HUNTER LAST WORDS] Error generating: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"Failed to generate last words: {e}")
+    
+    def _format_shoot_info_detailed(
+        self, 
+        shot_used: bool, 
+        shoot_target: Optional[str], 
+        can_shoot: bool,
+        shoot_history: List[str]
+    ) -> str:
+        """
+        详细格式化开枪信息（用于遗言阶段）
         
-        prompt = format_prompt(LAST_WORDS_PROMPT, {
-            "history": context,
-            "shoot_info": shoot_info
-        })
+        遗言阶段需要详细说明开枪决策，帮助好人阵营
         
-        result = self._llm_generate(prompt)
-        result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
+        Args:
+            shot_used: 是否已使用开枪
+            shoot_target: 开枪目标
+            can_shoot: 是否可以开枪
+            shoot_history: 开枪历史
+            
+        Returns:
+            格式化的开枪信息字符串
+        """
+        if shot_used and shoot_target:
+            # 已经开枪，详细说明原因
+            reason = self._get_shoot_reason(shoot_target)
+            return f"I shot {shoot_target}. Reason: {reason}. This was my strategic choice to eliminate a high-probability wolf."
+        elif can_shoot:
+            # 可以开枪但选择不开（不确定目标）
+            return "I can still shoot but chose not to use it yet due to uncertainty about remaining players. I wanted to preserve this ability for a clearer target."
+        else:
+            # 不能开枪（被毒）
+            return "I cannot shoot because I was poisoned by the Witch. This prevented me from using my shooting ability."
+    
+    def _get_shoot_reason(self, target: str) -> str:
+        """
+        获取开枪原因（详细版，用于遗言）
         
-        logger.info(f"[HUNTER LAST WORDS] Generated (length: {len(result)})")
-        return AgentResp(success=True, result=result, errMsg=None)
+        Args:
+            target: 开枪目标
+            
+        Returns:
+            开枪原因（详细说明）
+        """
+        # 获取目标的信任分数
+        trust_scores = self.memory.load_variable("trust_scores") or {}
+        trust_score = trust_scores.get(target, 50)
+        
+        # 获取注入攻击和虚假引用
+        player_data = self.memory.load_variable("player_data") or {}
+        target_data = player_data.get(target, {})
+        
+        reasons = []
+        
+        # 信任分数
+        if trust_score < 20:
+            reasons.append(f"extremely low trust score ({trust_score:.0f}/100)")
+        elif trust_score < 30:
+            reasons.append(f"very low trust score ({trust_score:.0f}/100)")
+        elif trust_score < 50:
+            reasons.append(f"low trust score ({trust_score:.0f}/100)")
+        
+        # 注入攻击
+        if target_data.get("malicious_injection"):
+            injection_type = target_data.get("injection_type", "UNKNOWN")
+            reasons.append(f"used injection attack ({injection_type})")
+        
+        # 虚假引用
+        if target_data.get("false_quotes", 0) > 0:
+            count = target_data.get("false_quotes", 0)
+            reasons.append(f"made {count} false quotation(s)")
+        
+        # 投票历史（狼人保护行为）
+        voting_history = self.memory.load_variable("voting_history") or {}
+        if target in voting_history:
+            votes = voting_history[target]
+            if isinstance(votes, list) and len(votes) >= 3:
+                # 检查是否总是投好人
+                reasons.append("suspicious voting pattern (consistently voted for good players)")
+        
+        # 如果没有具体原因，使用通用描述
+        if not reasons:
+            reasons.append(f"highest wolf probability among candidates (trust: {trust_score:.0f})")
+        
+        return ", ".join(reasons)
+    
+    def _format_trust_summary(self, alive_players: List[str], my_name: str) -> str:
+        """
+        格式化信任分数摘要（统一格式）
+        
+        Args:
+            alive_players: 存活玩家列表
+            my_name: 自己的名字
+            
+        Returns:
+            格式化的信任分数摘要
+        """
+        trust_scores = self.memory.load_variable("trust_scores") or {}
+        if not trust_scores or not alive_players:
+            return "No trust data"
+        
+        sorted_players = sorted(
+            [(p, trust_scores.get(p, 50)) for p in alive_players if p != my_name],
+            key=lambda x: x[1],
+            reverse=True
+        )
+        
+        trust_lines = [f"{p}: {score:.0f}" for p, score in sorted_players[:8]]
+        return "\n".join(trust_lines) if trust_lines else "No trust data"
+    
+    def _format_history(self, speech_history: dict, max_entries: int = 10) -> str:
+        """
+        格式化发言历史
+        
+        Args:
+            speech_history: 发言历史字典
+            max_entries: 最大条目数
+            
+        Returns:
+            格式化的历史字符串
+        """
+        if not speech_history or not isinstance(speech_history, dict):
+            return "No speech history available."
+        
+        entries = []
+        for player, speeches in speech_history.items():
+            if isinstance(speeches, list) and speeches:
+                # 只取最近的发言
+                recent = speeches[-2:] if len(speeches) > 2 else speeches
+                for speech in recent:
+                    if speech and isinstance(speech, str):
+                        entries.append(f"{player}: {speech[:100]}...")
+        
+        # 限制条目数
+        if len(entries) > max_entries:
+            entries = entries[-max_entries:]
+        
+        return "\n".join(entries) if entries else "No recent speeches."
     
     def _interact_vote(self, req: AgentReq) -> AgentResp:
         """
@@ -385,3 +765,343 @@ class HunterAgent(BaseGoodAgent):
         self._handle_game_end(req)
         
         return AgentResp(success=True, result=None, errMsg=None)
+
+    # ==================== 警长相关方法 ====================
+    
+    def _interact_sheriff_election(self, req: AgentReq) -> AgentResp:
+        """
+        处理警长选举决策（与SHERIFF_ELECTION_PROMPT一致）
+        
+        决策因素（与提示词决策树一致）：
+        - 能力状态：can_shoot = True → 高威慑力，适合竞选
+        - 游戏阶段：Early (Day 1) → 保持隐藏；Mid/Late → 考虑竞选
+        - 好人阵营需求：缺乏领导 → 竞选；已有强力候选人 → 不竞选
+        - 战略价值：建立信任 vs 保持神秘
+        
+        Args:
+            req: 选举请求
+            
+        Returns:
+            AgentResp: 是否参选（"Run for Sheriff" 或 "Do Not Run"）
+        """
+        try:
+            # 构建上下文
+            my_name = self.memory.load_variable("name") or "Unknown"
+            alive_players = self.memory.load_variable("alive_players") or []
+            can_shoot = self.memory.load_variable("can_shoot")
+            current_day = self._get_current_day()
+            
+            # 构建历史记录
+            speech_history = self.memory.load_variable("speech_history") or {}
+            history_str = self._format_history(speech_history, max_entries=10)
+            
+            # 格式化开枪信息
+            shoot_info = "can shoot" if can_shoot else "already shot"
+            
+            # 格式化prompt（使用SHERIFF_ELECTION_PROMPT）
+            prompt = format_prompt(SHERIFF_ELECTION_PROMPT, {
+                "history": history_str,
+                "name": my_name,
+                "shoot_info": shoot_info
+            })
+            
+            result = self._llm_generate(prompt, temperature=0.3)
+            
+            # 解析结果
+            decision = "Run for Sheriff" if "run" in result.lower() else "Do Not Run"
+            
+            logger.info(f"[HUNTER SHERIFF ELECTION] Decision: {decision} (day: {current_day}, can_shoot: {can_shoot})")
+            return AgentResp(success=True, result=decision, errMsg=None)
+            
+        except Exception as e:
+            logger.error(f"[HUNTER SHERIFF ELECTION] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"Failed to make sheriff election decision: {e}")
+    
+    def _interact_sheriff_speech(self, req: AgentReq) -> AgentResp:
+        """
+        处理警长竞选演讲（与SHERIFF_SPEECH_PROMPT一致）
+        
+        ⚠️ 关键时序约束：警长选举发生在死亡公告之前！
+        - 不能引用当晚的死亡信息（Host还未公布）
+        - 只能使用之前天数的公开信息
+        - 重点：分析能力、领导力、威慑力
+        
+        身份暴露策略（与提示词决策树一致）：
+        - Early Game (Day 1): 隐藏身份，以强力平民身份竞选
+        - Mid Game (Day 2-3): 部分暗示（"I have retaliation power"）
+        - Late Game (Day 4+): 完全暴露（"I am the Hunter"）
+        
+        Args:
+            req: 演讲请求
+            
+        Returns:
+            AgentResp: 演讲内容
+        """
+        try:
+            # 构建上下文
+            my_name = self.memory.load_variable("name") or "Unknown"
+            alive_players = self.memory.load_variable("alive_players") or []
+            can_shoot = self.memory.load_variable("can_shoot")
+            current_day = self._get_current_day()
+            
+            # 构建历史记录（只包含之前的信息，不包含当晚死亡）
+            speech_history = self.memory.load_variable("speech_history") or {}
+            history_str = self._format_history(speech_history, max_entries=10)
+            
+            # 格式化开枪信息（用于演讲策略）
+            shoot_info = "can shoot" if can_shoot else "already shot"
+            
+            # 添加时序约束提醒（确保LLM不会引用未公布的信息）
+            timing_reminder = (
+                "⚠️ CRITICAL: Sheriff election happens BEFORE death announcements. "
+                "Do NOT mention who died last night - Host hasn't revealed it yet!"
+            )
+            
+            # 格式化prompt（使用SHERIFF_SPEECH_PROMPT）
+            prompt = format_prompt(SHERIFF_SPEECH_PROMPT, {
+                "history": history_str,
+                "name": my_name,
+                "shoot_info": shoot_info
+            })
+            
+            # 在prompt前添加时序约束
+            prompt = f"{timing_reminder}\n\n{prompt}"
+            
+            result = self._llm_generate(prompt, temperature=0.7)
+            result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
+            
+            logger.info(f"[HUNTER SHERIFF SPEECH] Generated (length: {len(result)}, day: {current_day})")
+            return AgentResp(success=True, result=result, errMsg=None)
+            
+        except Exception as e:
+            logger.error(f"[HUNTER SHERIFF SPEECH] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"Failed to generate sheriff speech: {e}")
+    
+    def _interact_sheriff_vote(self, req: AgentReq) -> AgentResp:
+        """
+        处理警长选举投票（与SHERIFF_VOTE_PROMPT一致）
+        
+        投票标准（与提示词决策树一致）：
+        - 优先考虑：确认好人（预言家验证）、强逻辑发言者、准确投票历史、领导能力
+        - 避免投票：可疑玩家（信任<50）、矛盾发言者、保护狼人的投票者、注入攻击者
+        - 战略考虑：谁能保护我、谁能有效领导、谁让狼人害怕、谁能团结好人
+        
+        Args:
+            req: 投票请求
+            
+        Returns:
+            AgentResp: 投票目标
+        """
+        try:
+            my_name = self.memory.load_variable("name")
+            
+            # 获取候选人列表并过滤掉自己
+            if req.message:
+                choices = [name.strip() for name in req.message.split(",") if name.strip() and name.strip() != my_name]
+            else:
+                choices = []
+            
+            if not choices:
+                logger.warning("[HUNTER SHERIFF VOTE] No valid choices available")
+                return AgentResp(success=True, result="", errMsg=None)
+            
+            # 构建上下文
+            alive_players = self.memory.load_variable("alive_players") or []
+            
+            # 构建历史记录
+            speech_history = self.memory.load_variable("speech_history") or {}
+            history_str = self._format_history(speech_history, max_entries=10)
+            
+            # 格式化prompt（使用SHERIFF_VOTE_PROMPT）
+            prompt = format_prompt(SHERIFF_VOTE_PROMPT, {
+                "history": history_str,
+                "name": my_name,
+                "choices": ", ".join(choices)
+            })
+            
+            result = self._llm_generate(prompt, temperature=0.2)
+            target = self._validate_player_name(result.strip(), choices)
+            
+            logger.info(f"[HUNTER SHERIFF VOTE] Target: {target}")
+            return AgentResp(success=True, result=target, errMsg=None)
+            
+        except Exception as e:
+            logger.error(f"[HUNTER SHERIFF VOTE] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"Failed to make sheriff vote decision: {e}")
+    
+    def _interact_sheriff_pk(self, req: AgentReq) -> AgentResp:
+        """
+        处理警长PK演讲（与SHERIFF_PK_PROMPT一致）
+        
+        PK演讲策略（与提示词结构一致）：
+        1. 反驳对手（20%）：指出逻辑漏洞、可疑行为、投票历史问题
+        2. 自我倡导（40%）：游戏状态分析、嫌疑人列表、领导计划
+        3. 威慑展示（20%）：暗示能力、警告狼人、展示信心
+        4. 结尾呼吁（20%）：为何值得当选、呼吁好人团结、最终诉求
+        
+        身份暴露决策：
+        - 对手可疑 + 需要强威慑 → 完全暴露
+        - 对手似乎是好人 + 中期游戏 → 部分暗示
+        - 战略压力 → 战略暗示
+        
+        Args:
+            req: PK请求
+            
+        Returns:
+            AgentResp: PK演讲内容
+        """
+        try:
+            # 构建上下文
+            my_name = self.memory.load_variable("name") or "Unknown"
+            alive_players = self.memory.load_variable("alive_players") or []
+            can_shoot = self.memory.load_variable("can_shoot")
+            current_day = self._get_current_day()
+            
+            # 构建历史记录
+            speech_history = self.memory.load_variable("speech_history") or {}
+            history_str = self._format_history(speech_history, max_entries=10)
+            
+            # 格式化开枪信息
+            shoot_info = "can shoot" if can_shoot else "already shot"
+            
+            # 格式化prompt（使用SHERIFF_PK_PROMPT）
+            prompt = format_prompt(SHERIFF_PK_PROMPT, {
+                "history": history_str,
+                "name": my_name,
+                "shoot_info": shoot_info
+            })
+            
+            result = self._llm_generate(prompt, temperature=0.7)
+            result = self._truncate_output(result, self.config.MAX_SPEECH_LENGTH)
+            
+            logger.info(f"[HUNTER SHERIFF PK] Generated (length: {len(result)}, day: {current_day})")
+            return AgentResp(success=True, result=result, errMsg=None)
+            
+        except Exception as e:
+            logger.error(f"[HUNTER SHERIFF PK] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"Failed to generate sheriff PK speech: {e}")
+    
+    def _interact_sheriff_speech_order(self, req: AgentReq) -> AgentResp:
+        """
+        处理警长发言顺序选择（与SHERIFF_SPEECH_ORDER_PROMPT一致）
+        
+        战略考虑：
+        - 后发言者有信息优势（可以听到其他人的发言）
+        - 先发言者设定基调
+        - 考虑哪些玩家应该后发言（可疑玩家先发言，减少信息优势）
+        - 考虑哪些玩家应该先发言（可信玩家后发言，可以总结）
+        
+        Args:
+            req: 顺序请求
+            
+        Returns:
+            AgentResp: 发言顺序（"Clockwise" 或 "Counter-clockwise"）
+        """
+        try:
+            # 构建上下文
+            my_name = self.memory.load_variable("name") or "Unknown"
+            alive_players = self.memory.load_variable("alive_players") or []
+            
+            # 构建历史记录
+            speech_history = self.memory.load_variable("speech_history") or {}
+            history_str = self._format_history(speech_history, max_entries=10)
+            
+            # 格式化prompt（使用SHERIFF_SPEECH_ORDER_PROMPT）
+            prompt = format_prompt(SHERIFF_SPEECH_ORDER_PROMPT, {
+                "history": history_str,
+                "name": my_name
+            })
+            
+            result = self._llm_generate(prompt, temperature=0.3)
+            
+            # 解析结果
+            order = "Clockwise" if "clockwise" in result.lower() and "counter" not in result.lower() else "Counter-clockwise"
+            
+            logger.info(f"[HUNTER SHERIFF ORDER] Order: {order}")
+            return AgentResp(success=True, result=order, errMsg=None)
+            
+        except Exception as e:
+            logger.error(f"[HUNTER SHERIFF ORDER] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"Failed to make sheriff speech order decision: {e}")
+    
+    def _interact_sheriff_transfer(self, req: AgentReq) -> AgentResp:
+        """
+        处理警徽转移（与SHERIFF_TRANSFER_PROMPT一致）
+        
+        候选人评估标准：
+        - 信任阈值：≥75优秀，60-74良好，50-59可接受，<50避免
+        - 高优先级：确认好人、强逻辑分析、准确投票历史、领导能力、关键角色
+        - 避免：可疑玩家、弱发言者、不一致投票者、边缘玩家
+        
+        特殊考虑：
+        - 谁能有效使用2倍投票权
+        - 谁能领导好人阵营
+        - 谁让狼人害怕
+        - 谁有清晰思维
+        
+        警徽销毁：仅在没有合适候选人时（最后手段）
+        
+        Args:
+            req: 转移请求
+            
+        Returns:
+            AgentResp: 转移目标（或 "tear" 销毁警徽）
+        """
+        try:
+            my_name = self.memory.load_variable("name")
+            
+            # 获取候选人列表并过滤掉自己
+            if req.message:
+                choices = [name.strip() for name in req.message.split(",") if name.strip() and name.strip() != my_name]
+            else:
+                choices = []
+            
+            if not choices:
+                logger.warning("[HUNTER SHERIFF TRANSFER] No valid choices available")
+                return AgentResp(success=True, result="tear", errMsg=None)
+            
+            # 构建上下文
+            alive_players = self.memory.load_variable("alive_players") or []
+            can_shoot = self.memory.load_variable("can_shoot")
+            
+            # 构建历史记录
+            speech_history = self.memory.load_variable("speech_history") or {}
+            history_str = self._format_history(speech_history, max_entries=10)
+            
+            # 格式化开枪信息
+            shoot_info = "can shoot" if can_shoot else "already shot"
+            
+            # 格式化prompt（使用SHERIFF_TRANSFER_PROMPT）
+            prompt = format_prompt(SHERIFF_TRANSFER_PROMPT, {
+                "history": history_str,
+                "name": my_name,
+                "shoot_info": shoot_info,
+                "choices": ", ".join(choices)
+            })
+            
+            result = self._llm_generate(prompt, temperature=0.2)
+            
+            # 解析结果
+            if "tear" in result.lower() or "destroy" in result.lower():
+                target = "tear"
+            else:
+                target = self._validate_player_name(result.strip(), choices)
+            
+            logger.info(f"[HUNTER SHERIFF TRANSFER] Target: {target}")
+            return AgentResp(success=True, result=target, errMsg=None)
+            
+        except Exception as e:
+            logger.error(f"[HUNTER SHERIFF TRANSFER] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"Failed to make sheriff transfer decision: {e}")

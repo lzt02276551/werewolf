@@ -843,6 +843,7 @@ Decision: Transfer to No.3
 Candidates: {choices}
 Return player name or "tear":"""
 
+# 遗言提示词必须在文件开头定义，以便正确导入
 LAST_WORDS_PROMPT = """{history}
 
 You are {name} (Guard), being eliminated. This is your LAST WORDS (≤1200 chars).

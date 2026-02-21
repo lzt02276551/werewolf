@@ -652,7 +652,7 @@ class BaseWolfAgent(BasicRoleAgent):
             分析结果文本
         """
         if not self.analysis_client:
-            return self.llm_call(prompt)
+            return self.llm_caller(prompt)
         
         try:
             response = self.analysis_client.chat.completions.create(
@@ -663,7 +663,7 @@ class BaseWolfAgent(BasicRoleAgent):
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"LLM分析失败: {e}")
-            return self.llm_call(prompt)
+            return self.llm_caller(prompt)
     
     def _llm_generate(self, prompt: str, temperature: float = 0.7) -> str:
         """
@@ -676,4 +676,4 @@ class BaseWolfAgent(BasicRoleAgent):
         Returns:
             生成的发言文本
         """
-        return self.llm_call(prompt)
+        return self.llm_caller(prompt)

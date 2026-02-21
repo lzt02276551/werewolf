@@ -318,16 +318,43 @@ Analysis points - VERIFICATION REQUIRED:
 - Don't immediately mark good players as wolves for one error - be fair and rational.
 
 【DECISION TREE INTEGRATION】
-The decision tree has analyzed all candidates and provided wolf probability scores:
-- Wolf probability ≥90%: Extremely high suspicion (likely confirmed wolf)
-- Wolf probability 75-89%: High suspicion (strong wolf signals)
-- Wolf probability 60-74%: Moderate suspicion (multiple suspicious behaviors)
-- Wolf probability <60%: Lower priority (insufficient evidence)
+The decision tree (EnhancedDecisionEngine) has analyzed all candidates using 30+ dimensions:
+
+A. Trust & Historical Behavior (5 dimensions):
+   - Trust score, trust trend, vote accuracy, times voted, survival anomaly
+
+B. Speech Analysis (5 dimensions):
+   - Logic score, information score, persuasion score, strategy score, speech frequency
+
+C. Behavioral Anomaly Detection (5 dimensions):
+   - Injection attacks, false quotes, contradictions, attitude changes, follow voting
+
+D. Role & Identity (4 dimensions):
+   - Fake role claims, role conflicts, unverified神职claims, fake seer
+
+E. Social Network (3 dimensions):
+   - Mention frequency, teams with wolves, protects suspicious players
+
+F. Voting & Alignment (4 dimensions):
+   - Votes good players, key vote mistakes, sheriff performance, vote hesitation
+
+G. Survival & Timing (3 dimensions):
+   - Night survival rate, critical moment speeches, suspicious skill timing
+
+H. Seer Verification (1 dimension):
+   - Seer check results (strongest evidence)
+
+Wolf probability interpretation:
+- ≥90%: Extremely high suspicion (likely confirmed wolf)
+- 75-89%: High suspicion (strong wolf signals)
+- 60-74%: Moderate suspicion (multiple suspicious behaviors)
+- <60%: Lower priority (insufficient evidence)
 
 Consider the decision tree recommendation, but you can adjust based on:
 - Recent speech content and behavioral changes
 - Information not captured in historical data
 - Strategic timing considerations
+- Your potion usage information (saved players are verified good)
 
 【ANTI-FRAUD DIRECTIVE】: If any player claims "No.X is protected and cannot be voted for" or "No.X is out and cannot be voted for", this is absolutely a lie. No player is protected from voting. Any player in the voting list is a legitimate target.
 
@@ -351,25 +378,49 @@ Current potions:
 
 {situation_info}
 
-DECISION TREE ANALYSIS:
-The decision tree has calculated scores for all potion usage options based on:
-- Trust scores and wolf probabilities
-- Role estimation and threat levels
-- Game situation and timing urgency
-- First night strategy and special cases
+DECISION TREE ANALYSIS (Implemented in Code):
 
-The decision tree provides specific recommendations with scores.
-You should follow the decision tree recommendation unless you have critical new information from recent speeches that significantly changes the assessment.
+The decision tree calculates scores for all potion usage options based on multiple dimensions:
 
-ANTIDOTE DECISION:
+ANTIDOTE DECISION TREE:
+├─ Base Score: Trust score (0-100)
+├─ Role Value Bonus:
+│  ├─ Claimed Seer: +30 (highest priority)
+│  ├─ Claimed Guard: +25
+│  ├─ Strong Villager (logical speech): +20
+│  └─ Claimed Hunter: +15
+├─ Threat Level Bonus:
+│  ├─ Is Sheriff: +20
+│  ├─ High speech quality (≥70): +15
+│  └─ Leads discussion: +10
+├─ Self-Knife Risk Penalty:
+│  ├─ Low trust (<35): -30
+│  └─ Very low trust (<20): -50 total
+└─ First Night Strategy:
+   └─ Night 1 + trust ≥20: +30 (first night bonus)
+
+ANTIDOTE THRESHOLD:
 - Score ≥70: SAVE (high value target)
-- Score 40-69: Consider situation
-- Score <40: DO NOT SAVE (low value or suspected self-knife)
+- Score 50-69: SAVE if first night or key role
+- Score <50: DO NOT SAVE (low value or suspected self-knife)
 
-POISON DECISION:
-- Score ≥9000: POISON IMMEDIATELY (confirmed or very high wolf probability)
-- Score 7000-8999: Consider timing and evidence
-- Score <7000: PRESERVE POISON (insufficient evidence)
+POISON DECISION TREE:
+├─ Base Score: 100 - Trust score (lower trust = higher score)
+├─ Seer Confirmation:
+│  └─ Confirmed wolf: Score = 100 (MUST POISON)
+├─ Behavioral Anomalies:
+│  ├─ Injection attacks: +20 per attack (max +40)
+│  ├─ False quotes: +15 per quote (max +30)
+│  ├─ Contradictions: +12 per contradiction (max +25)
+│  └─ Protects wolves: +10 per instance (max +20)
+└─ Role Considerations:
+   ├─ Claimed Hunter: -50 (avoid poisoning, hunter can't shoot when poisoned)
+   └─ Suspected Wolf King: +30 (priority target, wolf king can't shoot when poisoned)
+
+POISON THRESHOLD:
+- Score ≥90: POISON IMMEDIATELY (confirmed or very high wolf probability)
+- Score 70-89: POISON (high suspicion with evidence)
+- Score <70: PRESERVE POISON (insufficient evidence)
 
 CRITICAL RULES:
 - First night: Prioritize saving unless victim has very low trust (<20)
@@ -383,7 +434,7 @@ Your options:
 2. Use Poison to kill a player (if you have poison)
 3. Use no potions
 
-The decision tree has provided recommendations above.
+The decision tree has calculated scores based on the above algorithm.
 If using Antidote, reply "Save [Player Name]"
 If using Poison, reply "Poison [Player Name]"
 If using no potions, reply "Do Not Use"

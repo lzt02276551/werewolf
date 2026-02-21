@@ -25,6 +25,7 @@ from agent_build_sdk.model.werewolf_model import (
     STATUS_VOTE, STATUS_VOTE_RESULT, STATUS_SKILL,
     STATUS_SHERIFF_ELECTION, STATUS_SHERIFF_SPEECH,
     STATUS_SHERIFF_PK, STATUS_SHERIFF_VOTE, STATUS_SHERIFF_SPEECH_ORDER,
+    STATUS_SHERIFF,
     STATUS_RESULT
 )
 from agent_build_sdk.utils.logger import logger
@@ -32,7 +33,11 @@ from agent_build_sdk.sdk.agent import format_prompt
 from werewolf.core.base_wolf_agent import BaseWolfAgent
 from werewolf.wolf_king.config import WolfKingConfig
 from werewolf.wolf_king.prompt import (
-    DESC_PROMPT, SHERIFF_SPEECH_PROMPT, SHERIFF_PK_PROMPT
+    DESC_PROMPT, SHERIFF_SPEECH_PROMPT, SHERIFF_PK_PROMPT,
+    WOLF_SPEECH_PROMPT, SHERIFF_SPEECH_ORDER_PROMPT,
+    SHERIFF_TRANSFER_PROMPT, LAST_WORDS_PROMPT,
+    VOTE_PROMPT, KILL_PROMPT, SHOOT_SKILL_PROMPT,
+    SHERIFF_ELECTION_PROMPT, SHERIFF_VOTE_PROMPT
 )
 
 
@@ -54,14 +59,22 @@ class WolfKingAgent(BaseWolfAgent):
     - 开枪技能
     """
     
-    def __init__(self, model_name: str, analysis_model_name: str = None):
+    def __init__(self, model_name: str = None, analysis_model_name: str = None):
         """
         初始化Wolf King Agent
         
         Args:
-            model_name: LLM模型名称（用于生成发言）
-            analysis_model_name: 分析模型名称（用于分析消息）
+            model_name: LLM模型名称（可选）
+                       如果不提供，将从环境变量 MODEL_NAME 读取
+                       如果环境变量也没有，默认使用 "deepseek-chat"
+            analysis_model_name: 分析模型名称（可选，已废弃，使用环境变量 DETECTION_MODEL_NAME）
         """
+        # 如果没有提供model_name，从环境变量读取
+        if model_name is None:
+            import os
+            model_name = os.getenv('MODEL_NAME', 'deepseek-chat')
+            logger.info(f"Using model from environment: {model_name}")
+        
         # 调用父类初始化（自动初始化所有共享组件）
         super().__init__(ROLE_WOLF_KING, model_name, analysis_model_name)
         
@@ -124,17 +137,46 @@ class WolfKingAgent(BaseWolfAgent):
             logger.info("[WOLF KING] No valid shoot targets (all teammates)")
             return ""
         
-        # 根据配置的优先级策略选择目标
-        target = self._select_shoot_target_by_priority(non_teammates)
+        # 根据配置的优先级策略选择目标（算法建议）
+        algorithm_target = self._select_shoot_target_by_priority(non_teammates)
         
-        if target:
+        # 使用狼王专用开枪提示词进行确认
+        my_name = self.memory.load_variable("name") or ""
+        
+        # 从内存获取历史记录
+        history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
+        
+        prompt = format_prompt(SHOOT_SKILL_PROMPT, {
+            "history": "\n".join(history[-20:]) if history else "",
+            "name": my_name,
+            "teammates": ", ".join(teammates),
+            "algorithm_suggestion": algorithm_target,
+            "choices": ", ".join(candidates)
+        })
+        
+        # 使用较低温度确保决策稳定
+        llm_target = self._llm_generate(prompt, temperature=0.2)
+        llm_target = llm_target.strip()
+        
+        # 验证LLM输出
+        if "Do Not Shoot" in llm_target or "do not shoot" in llm_target.lower():
+            logger.info("[WOLF KING] LLM decided not to shoot")
+            return ""
+        
+        # 验证玩家名称
+        final_target = self._validate_player_name(llm_target, candidates)
+        if final_target not in non_teammates:
+            # 如果LLM输出无效，使用算法建议
+            final_target = algorithm_target
+        
+        if final_target:
             threat_levels = self.memory.load_variable("threat_levels") or {}
             identified_roles = self.memory.load_variable("identified_roles") or {}
-            threat = threat_levels.get(target, self.DEFAULT_THREAT_LEVEL)
-            role = identified_roles.get(target, "unknown")
-            logger.info(f"[WOLF KING SHOOT] Selected target: {target} (threat: {threat}, role: {role})")
+            threat = threat_levels.get(final_target, self.DEFAULT_THREAT_LEVEL)
+            role = identified_roles.get(final_target, "unknown")
+            logger.info(f"[WOLF KING SHOOT] Algorithm: {algorithm_target}, LLM: {llm_target}, Final: {final_target} (threat: {threat}, role: {role})")
         
-        return target
+        return final_target
     
     def _select_shoot_target_by_priority(self, candidates: List[str]) -> str:
         """
@@ -265,6 +307,7 @@ class WolfKingAgent(BaseWolfAgent):
                 STATUS_SHERIFF_VOTE: self._handle_sheriff_vote,
                 STATUS_SHERIFF_SPEECH_ORDER: self._handle_sheriff_speech_order,
                 STATUS_SHERIFF_PK: self._handle_sheriff_pk,
+                STATUS_SHERIFF: self._handle_sheriff_general,
                 STATUS_RESULT: self._handle_result,
             }
             
@@ -281,7 +324,15 @@ class WolfKingAgent(BaseWolfAgent):
     
     def _handle_shoot(self, req: AgentReq) -> AgentResp:
         """处理开枪（狼王特有）"""
-        candidates = req.choices
+        teammates = self.memory.load_variable("teammates") or []
+        my_name = self.memory.load_variable("name") or ""
+        
+        # 从req.message中解析候选人
+        if req.message:
+            candidates = [name.strip() for name in req.message.split(",") 
+                         if name.strip() and name.strip() != my_name and name.strip() not in teammates]
+        else:
+            candidates = []
         
         # 检查是否可以开枪
         if not self.memory.load_variable("can_shoot"):
@@ -315,25 +366,29 @@ class WolfKingAgent(BaseWolfAgent):
         my_name = req.name
         self.memory.set_variable("name", my_name)
         
-        teammates = self._extract_teammates(req.history)
-        self.memory.set_variable("teammates", teammates)
+        # 从message中提取队友信息
+        if req.message:
+            teammates = [name.strip() for name in req.message.split(",") if name.strip()]
+            self.memory.set_variable("teammates", teammates)
+            logger.info(f"[WOLF KING] Game started, I am {my_name}, teammates: {teammates}")
+        else:
+            logger.info(f"[WOLF KING] Game started, I am {my_name}, no teammates info yet")
         
-        logger.info(f"[WOLF KING] Game started, I am {my_name}, teammates: {teammates}")
         return AgentResp(success=True, result=None, errMsg=None)
     
     def _handle_wolf_speech(self, req: AgentReq) -> AgentResp:
         """处理狼人内部发言"""
-        from werewolf.wolf.prompt import WOLF_SPEECH_PROMPT
-        
         teammates = self.memory.load_variable("teammates") or []
         my_name = self.memory.load_variable("name") or ""
         
-        prompt = format_prompt(
-            WOLF_SPEECH_PROMPT,
-            history="\n".join(req.history[-20:]),
-            name=my_name,
-            teammates=", ".join(teammates)
-        )
+        # 从内存获取历史记录
+        history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
+        
+        prompt = format_prompt(WOLF_SPEECH_PROMPT, {
+            "history": "\n".join(history[-20:]) if history else "",
+            "name": my_name,
+            "teammates": ", ".join(teammates)
+        })
         
         speech = self._llm_generate(prompt)
         speech = self._truncate_output(speech, self.config.MAX_SPEECH_LENGTH)
@@ -343,26 +398,24 @@ class WolfKingAgent(BaseWolfAgent):
     def _handle_discussion(self, req: AgentReq) -> AgentResp:
         """处理讨论阶段"""
         my_name = self.memory.load_variable("name") or ""
-        for msg in req.history:
-            if msg.startswith("No.") and ":" in msg:
-                parts = msg.split(":", 1)
-                if len(parts) == 2:
-                    player_name = parts[0].strip()
-                    message = parts[1].strip()
-                    if player_name != my_name:
-                        self._process_player_message(message, player_name)
+        
+        # 处理当前消息
+        if req.message and req.name and req.name != my_name:
+            self._process_player_message(req.message, req.name)
+        
+        # 从内存获取历史记录
+        history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
         
         teammates = self.memory.load_variable("teammates") or []
         can_shoot = self.memory.load_variable("can_shoot")
         shoot_info = "can shoot" if can_shoot else "already shot"
         
-        prompt = format_prompt(
-            DESC_PROMPT,
-            history="\n".join(req.history[-30:]),
-            name=my_name,
-            teammates=", ".join(teammates),
-            shoot_info=shoot_info
-        )
+        prompt = format_prompt(DESC_PROMPT, {
+            "history": "\n".join(history[-30:]) if history else "",
+            "name": my_name,
+            "teammates": ", ".join(teammates),
+            "shoot_info": shoot_info
+        })
         
         speech = self._llm_generate(prompt)
         speech = self._truncate_output(speech, self.config.MAX_SPEECH_LENGTH)
@@ -371,14 +424,46 @@ class WolfKingAgent(BaseWolfAgent):
     
     def _handle_vote(self, req: AgentReq) -> AgentResp:
         """处理投票"""
-        candidates = req.choices
+        teammates = self.memory.load_variable("teammates") or []
+        my_name = self.memory.load_variable("name") or ""
+        
+        # 从req.message中解析候选人
+        if req.message:
+            candidates = [name.strip() for name in req.message.split(",") 
+                         if name.strip() and name.strip() != my_name]
+        else:
+            candidates = []
+        
         if not candidates:
+            logger.warning("[WOLF KING VOTE] No valid candidates")
             return AgentResp(success=True, result="No.1", errMsg=None)
         
+        # 使用基类的决策逻辑获取算法建议
         target = self._make_vote_decision(candidates)
-        target = self._validate_player_name(target, candidates)
         
-        return AgentResp(success=True, result=target, errMsg=None)
+        # 从内存获取历史记录
+        history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
+        
+        # 使用狼王专用投票提示词进行确认
+        prompt = format_prompt(VOTE_PROMPT, {
+            "history": "\n".join(history[-30:]) if history else "",
+            "name": my_name,
+            "teammates": ", ".join(teammates),
+            "algorithm_suggestion": target,
+            "choices": ", ".join(candidates)
+        })
+        
+        # 使用较低温度确保决策稳定
+        llm_target = self._llm_generate(prompt, temperature=0.2)
+        llm_target = llm_target.strip()
+        
+        # 验证LLM输出，如果无效则使用算法建议
+        final_target = self._validate_player_name(llm_target, candidates)
+        if final_target not in candidates:
+            final_target = target
+        
+        logger.info(f"[WOLF KING VOTE] Algorithm: {target}, LLM: {llm_target}, Final: {final_target}")
+        return AgentResp(success=True, result=final_target, errMsg=None)
     
     def _handle_vote_result(self, req: AgentReq) -> AgentResp:
         """处理投票结果"""
@@ -386,18 +471,76 @@ class WolfKingAgent(BaseWolfAgent):
     
     def _handle_kill(self, req: AgentReq) -> AgentResp:
         """处理击杀"""
-        candidates = req.choices
+        teammates = self.memory.load_variable("teammates") or []
+        my_name = self.memory.load_variable("name") or ""
+        
+        # 从req.message中解析候选人
+        if req.message:
+            candidates = [name.strip() for name in req.message.split(",") 
+                         if name.strip() and name.strip() != my_name and name.strip() not in teammates]
+        else:
+            candidates = []
+        
         if not candidates:
+            logger.warning("[WOLF KING KILL] No valid candidates")
             return AgentResp(success=True, result="No.1", skillTargetPlayer="No.1", errMsg=None)
         
+        # 使用基类的决策逻辑获取算法建议
         target = self._make_kill_decision(candidates)
-        target = self._validate_player_name(target, candidates)
         
-        return AgentResp(success=True, result=target, skillTargetPlayer=target, errMsg=None)
+        # 从内存获取历史记录
+        history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
+        
+        # 使用狼王专用击杀提示词进行确认
+        prompt = format_prompt(KILL_PROMPT, {
+            "history": "\n".join(history[-30:]) if history else "",
+            "name": my_name,
+            "teammates": ", ".join(teammates),
+            "algorithm_suggestion": target,
+            "choices": ", ".join(candidates)
+        })
+        
+        # 使用较低温度确保决策稳定
+        llm_target = self._llm_generate(prompt, temperature=0.2)
+        llm_target = llm_target.strip()
+        
+        # 验证LLM输出，如果无效则使用算法建议
+        final_target = self._validate_player_name(llm_target, candidates)
+        if final_target not in candidates:
+            final_target = target
+        
+        logger.info(f"[WOLF KING KILL] Algorithm: {target}, LLM: {llm_target}, Final: {final_target}")
+        return AgentResp(success=True, result=final_target, skillTargetPlayer=final_target, errMsg=None)
     
     def _handle_sheriff_election(self, req: AgentReq) -> AgentResp:
         """处理警长选举"""
-        return AgentResp(success=True, result="Do Not Run", errMsg=None)
+        teammates = self.memory.load_variable("teammates") or []
+        my_name = self.memory.load_variable("name") or ""
+        can_shoot = self.memory.load_variable("can_shoot")
+        shoot_info = "can shoot" if can_shoot else "already shot"
+        
+        # 从内存获取历史记录
+        history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
+        
+        prompt = format_prompt(SHERIFF_ELECTION_PROMPT, {
+            "history": "\n".join(history[-30:]) if history else "",
+            "name": my_name,
+            "teammates": ", ".join(teammates),
+            "shoot_info": shoot_info
+        })
+        
+        decision = self._llm_generate(prompt, temperature=0.3)
+        decision = decision.strip()
+        
+        # 验证输出
+        if "Run for Sheriff" in decision or "run" in decision.lower():
+            result = "Run for Sheriff"
+            logger.info("[WOLF KING] Decided to run for Sheriff")
+        else:
+            result = "Do Not Run"
+            logger.info("[WOLF KING] Decided not to run for Sheriff")
+        
+        return AgentResp(success=True, result=result, errMsg=None)
     
     def _handle_sheriff_speech(self, req: AgentReq) -> AgentResp:
         """处理警长竞选发言"""
@@ -405,12 +548,14 @@ class WolfKingAgent(BaseWolfAgent):
         can_shoot = self.memory.load_variable("can_shoot")
         shoot_info = "can shoot" if can_shoot else "already shot"
         
-        prompt = format_prompt(
-            SHERIFF_SPEECH_PROMPT,
-            history="\n".join(req.history[-30:]),
-            name=my_name,
-            shoot_info=shoot_info
-        )
+        # 从内存获取历史记录
+        history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
+        
+        prompt = format_prompt(SHERIFF_SPEECH_PROMPT, {
+            "history": "\n".join(history[-30:]) if history else "",
+            "name": my_name,
+            "shoot_info": shoot_info
+        })
         
         speech = self._llm_generate(prompt)
         speech = self._truncate_output(speech, self.config.MAX_SPEECH_LENGTH)
@@ -419,26 +564,65 @@ class WolfKingAgent(BaseWolfAgent):
     
     def _handle_sheriff_vote(self, req: AgentReq) -> AgentResp:
         """处理警长投票"""
-        candidates = req.choices
+        teammates = self.memory.load_variable("teammates") or []
+        my_name = self.memory.load_variable("name") or ""
+        
+        # 从req.message中解析候选人
+        if req.message:
+            candidates = [name.strip() for name in req.message.split(",") 
+                         if name.strip() and name.strip() != my_name]
+        else:
+            candidates = []
+        
         if not candidates:
+            logger.warning("[WOLF KING] No sheriff vote candidates")
             return AgentResp(success=True, result="No.1", errMsg=None)
         
-        teammates = self.memory.load_variable("teammates") or []
-        teammate_candidates = [c for c in candidates if c in teammates]
+        # 从内存获取历史记录
+        history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
         
-        if teammate_candidates:
-            target = teammate_candidates[0]
-        else:
-            threat_levels = self.memory.load_variable("threat_levels") or {}
-            scores = {c: threat_levels.get(c, self.DEFAULT_THREAT_LEVEL) for c in candidates}
-            target = min(scores.items(), key=lambda x: x[1])[0]
+        # 使用狼王专用警长投票提示词
+        prompt = format_prompt(SHERIFF_VOTE_PROMPT, {
+            "history": "\n".join(history[-30:]) if history else "",
+            "name": my_name,
+            "teammates": ", ".join(teammates),
+            "choices": ", ".join(candidates)
+        })
         
+        target = self._llm_generate(prompt, temperature=0.3)
+        target = target.strip()
+        
+        # 验证输出
         target = self._validate_player_name(target, candidates)
+        
+        logger.info(f"[WOLF KING] Sheriff vote: {target}")
         return AgentResp(success=True, result=target, errMsg=None)
     
     def _handle_sheriff_speech_order(self, req: AgentReq) -> AgentResp:
         """处理警长发言顺序选择"""
-        return AgentResp(success=True, result="Clockwise", errMsg=None)
+        my_name = self.memory.load_variable("name") or ""
+        teammates = self.memory.load_variable("teammates") or []
+        
+        # 从内存获取历史记录
+        history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
+        
+        prompt = format_prompt(SHERIFF_SPEECH_ORDER_PROMPT, {
+            "history": "\n".join(history[-30:]) if history else "",
+            "name": my_name,
+            "teammates": ", ".join(teammates)
+        })
+        
+        order = self._llm_generate(prompt, temperature=0.3)
+        order = order.strip()
+        
+        # 验证输出
+        if "Counter-clockwise" in order or "counter" in order.lower():
+            result = "Counter-clockwise"
+        else:
+            result = "Clockwise"
+        
+        logger.info(f"[WOLF KING] Speech order: {result}")
+        return AgentResp(success=True, result=result, errMsg=None)
     
     def _handle_sheriff_pk(self, req: AgentReq) -> AgentResp:
         """处理警长PK发言"""
@@ -446,12 +630,14 @@ class WolfKingAgent(BaseWolfAgent):
         can_shoot = self.memory.load_variable("can_shoot")
         shoot_info = "can shoot" if can_shoot else "already shot"
         
-        prompt = format_prompt(
-            SHERIFF_PK_PROMPT,
-            history="\n".join(req.history[-30:]),
-            name=my_name,
-            shoot_info=shoot_info
-        )
+        # 从内存获取历史记录
+        history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
+        
+        prompt = format_prompt(SHERIFF_PK_PROMPT, {
+            "history": "\n".join(history[-30:]) if history else "",
+            "name": my_name,
+            "shoot_info": shoot_info
+        })
         
         speech = self._llm_generate(prompt)
         speech = self._truncate_output(speech, self.config.MAX_SPEECH_LENGTH)
@@ -466,3 +652,101 @@ class WolfKingAgent(BaseWolfAgent):
         
         logger.info(f"[WOLF KING] Game ended: {result}")
         return AgentResp(success=True, result=None, errMsg=None)
+    
+    def _handle_sheriff_general(self, req: AgentReq) -> AgentResp:
+        """
+        处理警长相关的通用状态
+        
+        根据消息内容判断具体是什么操作：
+        - 警长转移
+        - 遗言
+        - 其他警长相关操作
+        """
+        # 从内存获取历史记录
+        history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
+        history_text = "\n".join(history[-5:]).lower() if history else ""
+        
+        # 也检查当前消息
+        current_message = (req.message or "").lower()
+        combined_text = history_text + " " + current_message
+        
+        # 判断是否是警长转移
+        if "transfer" in combined_text or "badge" in combined_text or "警徽" in combined_text:
+            return self._handle_sheriff_transfer(req)
+        
+        # 判断是否是遗言
+        if "last words" in combined_text or "遗言" in combined_text or "final" in combined_text:
+            return self._handle_last_words(req)
+        
+        # 默认返回成功
+        logger.info("[WOLF KING] Sheriff general status, no specific action")
+        return AgentResp(success=True, result=None, errMsg=None)
+    
+    def _handle_sheriff_transfer(self, req: AgentReq) -> AgentResp:
+        """处理警长转移（狼王被淘汰时）"""
+        teammates = self.memory.load_variable("teammates") or []
+        my_name = self.memory.load_variable("name") or ""
+        can_shoot = self.memory.load_variable("can_shoot")
+        shoot_info = "can shoot" if can_shoot else "already shot"
+        
+        # 从req.message中解析候选人
+        if req.message:
+            candidates = [name.strip() for name in req.message.split(",") 
+                         if name.strip() and name.strip() != my_name]
+        else:
+            candidates = []
+        
+        if not candidates:
+            logger.warning("[WOLF KING] No sheriff transfer candidates")
+            return AgentResp(success=True, result="Destroy", errMsg=None)
+        
+        # 从内存获取历史记录
+        history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
+        
+        prompt = format_prompt(SHERIFF_TRANSFER_PROMPT, {
+            "history": "\n".join(history[-30:]) if history else "",
+            "name": my_name,
+            "teammates": ", ".join(teammates),
+            "shoot_info": shoot_info,
+            "choices": ", ".join(candidates)
+        })
+        
+        target = self._llm_generate(prompt, temperature=0.3)
+        target = target.strip()
+        
+        # 验证输出
+        if "Destroy" in target or "destroy" in target.lower():
+            result = "Destroy"
+            logger.info("[WOLF KING] Destroying sheriff badge")
+        else:
+            # 验证玩家名称
+            result = self._validate_player_name(target, candidates)
+            logger.info(f"[WOLF KING] Transferring sheriff badge to: {result}")
+        
+        return AgentResp(success=True, result=result, errMsg=None)
+    
+    def _handle_last_words(self, req: AgentReq) -> AgentResp:
+        """处理遗言（狼王被淘汰后的最后发言）"""
+        teammates = self.memory.load_variable("teammates") or []
+        my_name = self.memory.load_variable("name") or ""
+        can_shoot = self.memory.load_variable("can_shoot")
+        shoot_info = "can shoot" if can_shoot else "already shot"
+        
+        # 从内存获取历史记录
+        history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
+        
+        prompt = format_prompt(LAST_WORDS_PROMPT, {
+            "history": "\n".join(history[-30:]) if history else "",
+            "name": my_name,
+            "teammates": ", ".join(teammates),
+            "shoot_info": shoot_info
+        })
+        
+        speech = self._llm_generate(prompt)
+        # 遗言长度控制：600-1000字符
+        max_length = 1000
+        if len(speech) > max_length:
+            speech = speech[:max_length - 3] + "..."
+        
+        logger.info(f"[WOLF KING] Last words length: {len(speech)}")
+        return AgentResp(success=True, result=speech, errMsg=None)

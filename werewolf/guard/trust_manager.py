@@ -70,6 +70,8 @@ class TrustScoreManager:
         Args:
             memory: 记忆系统
         """
+        if not memory:
+            raise ValueError("Memory system is required for TrustScoreManager")
         self.memory = memory
         self.config = TrustScoreConfig()
     
