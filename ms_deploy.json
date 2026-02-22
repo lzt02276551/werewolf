@@ -5,10 +5,10 @@
   "port": 7860,
   "environment_variables": [
     {"name": "MODEL_NAME", "value": "deepseek-chat"},
-    {"name": "OPENAI_API_KEY", "value": "sk-6320c699e7004706be3af12cde1eb3a6"},
+    {"name": "OPENAI_API_KEY", "value": "YOUR_API_KEY_HERE"},
     {"name": "OPENAI_BASE_URL", "value": "https://api.deepseek.com/v1"},
     {"name": "DETECTION_MODEL_NAME", "value": "deepseek-reasoner"},
-    {"name": "DETECTION_API_KEY", "value": "sk-6320c699e7004706be3af12cde1eb3a6"},
+    {"name": "DETECTION_API_KEY", "value": "YOUR_API_KEY_HERE"},
     {"name": "DETECTION_BASE_URL", "value": "https://api.deepseek.com/v1"},
     {"name": "ENABLE_GOLDEN_PATH", "value": "false"},
     {"name": "ML_AUTO_TRAIN", "value": "true"},
