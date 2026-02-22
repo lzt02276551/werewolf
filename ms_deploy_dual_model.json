@@ -1,0 +1,21 @@
+{
+  "$schema": "https://modelscope.cn/api/v1/studios/deploy_schema.json",
+  "sdk_type": "docker",
+  "resource_configuration": "platform/2v-cpu-16g-mem",
+  "port": 7860,
+  "environment_variables": [
+    {"name": "MODEL_NAME", "value": "deepseek-chat"},
+    {"name": "OPENAI_API_KEY", "value": "YOUR_API_KEY_HERE"},
+    {"name": "OPENAI_BASE_URL", "value": "https://api.deepseek.com/v1"},
+    {"name": "DETECTION_MODEL_NAME", "value": "deepseek-reasoner"},
+    {"name": "DETECTION_API_KEY", "value": "YOUR_API_KEY_HERE"},
+    {"name": "DETECTION_BASE_URL", "value": "https://api.deepseek.com/v1"},
+    {"name": "ENABLE_GOLDEN_PATH", "value": "false"},
+    {"name": "ML_AUTO_TRAIN", "value": "true"},
+    {"name": "ML_TRAIN_INTERVAL", "value": "10"},
+    {"name": "ML_MIN_SAMPLES", "value": "50"},
+    {"name": "ML_MODEL_DIR", "value": "./ml_models"},
+    {"name": "DATA_DIR", "value": "./game_data"},
+    {"name": "LOG_LEVEL", "value": "INFO"}
+  ]
+}
