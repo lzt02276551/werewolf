@@ -20,7 +20,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # 仅复制运行必需的文件
 COPY werewolf/ ./werewolf/
 COPY config.py utils.py ./
-COPY start.sh .
+COPY start.sh test_minimal.py ./
+COPY README.md ./
 
 # 创建必要的目录
 RUN mkdir -p ml_models game_data logs
@@ -40,8 +41,9 @@ ENV PYTHONUNBUFFERED=1 \
 RUN chmod +x start.sh
 
 # 健康检查（使用urllib避免额外依赖）
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/health', timeout=5)" || exit 1
+# 注意：如果应用没有/health端点，可以注释掉这行
+# HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+#     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/health', timeout=5)" || exit 1
 
 # 启动应用
 CMD ["./start.sh"]
