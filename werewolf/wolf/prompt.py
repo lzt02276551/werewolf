@@ -365,67 +365,126 @@ VOTE_PROMPT = """{history}
 You are {name}, a Werewolf. Your mission is to eliminate all good players.
 Your Werewolf teammates are: {teammates}
 
-=== BREAKTHROUGH VALUE VOTING STRATEGY ===
-The system uses Breakthrough Value to identify optimal voting targets:
-
-Breakthrough Score Formula:
-Score = Breakthrough Value × 0.5 + Threat Adjustment × 0.3 + Influence × 0.2
-
-Optimal targets:
-- High breakthrough (75+) + Medium threat (40-70) = BEST (easy to mislead, won't be protected)
-- High breakthrough (75+) + High threat (70+) = GOOD (easy to mislead but may be protected)
-- Low breakthrough (0-49) + High threat (70+) = AVOID (hard to mislead, waste of effort)
+=== CRITICAL: SMART VOTING STRATEGY (包含卖队友战术) ===
 
 【CODE-DRIVEN PRE-ANALYSIS】
-The system has pre-analyzed all candidates:
+The system has pre-analyzed all candidates (INCLUDING TEAMMATES):
 {ranked_candidates}
 
-DECISION TREE - VOTING STRATEGY:
+IMPORTANT: Candidates list INCLUDES your teammates. You must decide whether to betray them.
 
-Step 1: CANDIDATE ANALYSIS
-✓ COMPLETED BY CODE - See ranked_candidates above
+=== BETRAYAL DECISION TREE (卖队友决策树) ===
 
-Step 2: SACRIFICE TEAMMATE EVALUATION
-Consider sacrificing teammate ONLY if:
-- Teammate IQ score < 30 (very low intelligence)
-- Teammate already exposed (cannot protect)
-- Sacrifice builds YOUR trust significantly
-- Protects higher IQ teammates (≥70)
-- Late game requires sacrifice for win
+For each TEAMMATE in candidates, evaluate:
 
-Sacrifice Benefit Calculation:
-+ Trust gained: +30 points
-+ Self-protection: +25 points
-+ Protect high IQ teammate: +20 points
-- Lose teammate: -40 points
-→ If total > 35 points: Consider sacrifice
-→ If total ≤ 35 points: Protect teammate
+Step 1: CHECK IF TEAMMATE IS EXPOSED
+- Is teammate identified as wolf by good players? (Exposed=True)
+- Did good players publicly accuse teammate?
+- Is teammate under heavy suspicion?
 
-Step 3: THREAT-BASED VOTING
-✓ COMPLETED BY CODE - Candidates ranked by threat level
+If YES (Exposed):
+  → BETRAY PROBABILITY: HIGH (80%)
+  → REASON: Protecting exposed teammate will expose you
+  → STRATEGY: Vote teammate to gain trust and distance yourself
+  → BENEFIT: +30 trust, protect yourself, protect other teammates
 
-Step 4: VOTING COORDINATION
-- Align with high IQ teammates (≥70): Weight × 1.5
-- Evaluate medium IQ teammates (40-69): Weight × 1.0
-- Lower priority low IQ teammates (<40): Weight × 0.5
-- Concentrate wolf votes on same target
-- Follow majority if safe (avoid suspicion)
+If NO (Not Exposed):
+  → Continue to Step 2
 
-Step 5: VOTE REASONING
-Prepare logical explanation:
-- Cite their suspicious behavior
-- Reference their voting patterns
-- Mention speech contradictions
-- Show "good player" thinking
-- Don't reveal wolf knowledge
+Step 2: CHECK TEAMMATE INTELLIGENCE
+- Teammate IQ < 30? (Very Low Intelligence)
+  → BETRAY PROBABILITY: HIGH (70%)
+  → REASON: Low IQ teammate is liability, sacrifice for greater good
+  → BENEFIT: +20 trust, protect high IQ teammates
 
-VOTING RULES:
-- NEVER vote teammates (unless sacrifice strategy approved)
-- Prioritize high threat good players (see ranked_candidates)
-- Coordinate with wolf team
-- Maintain disguise with reasoning
+- Teammate IQ 30-50? (Low Intelligence)
+  → BETRAY PROBABILITY: MEDIUM (40%)
+  → REASON: Depends on game situation
+  → Consider: Game phase, other teammates' status
 
-Available candidates: {choices}
+- Teammate IQ > 50? (Normal or High Intelligence)
+  → BETRAY PROBABILITY: LOW (10%)
+  → REASON: Valuable teammate, protect if possible
+  → ONLY betray if absolutely necessary for survival
+
+Step 3: EVALUATE VOTING SITUATION
+- Are most players voting for your teammate?
+  → If YES: Consider joining majority to avoid suspicion
+  → If NO: Protect teammate by voting elsewhere
+
+- Is this late game (Day 4+)?
+  → If YES: Self-preservation priority increases
+  → Consider betraying to survive
+
+Step 4: CALCULATE BETRAYAL BENEFIT
+Benefit Score = Trust Gain + Self Protection + Protect Other Teammates - Lose Teammate
+- Trust Gain: +30 points
+- Self Protection: +25 points (if you're under suspicion)
+- Protect High IQ Teammates: +20 points (if they're at risk)
+- Lose Teammate: -40 points
+
+If Benefit Score > 35: BETRAY
+If Benefit Score ≤ 35: PROTECT
+
+=== VOTING STRATEGY FOR NON-TEAMMATES ===
+
+If voting for NON-TEAMMATE:
+1. Prioritize high breakthrough value (easy to mislead)
+2. Avoid high threat players (they might be protected)
+3. Follow majority if safe (avoid suspicion)
+4. Coordinate with high IQ teammates
+
+=== FINAL DECISION RULES ===
+
+Priority Order:
+1. SELF-PRESERVATION (highest priority)
+   - If not voting exposed teammate will expose you → BETRAY
+   
+2. PROTECT HIGH IQ TEAMMATES (≥70)
+   - Sacrifice low IQ teammate to protect high IQ ones
+   
+3. GAIN TRUST
+   - Betray low IQ or exposed teammate to build credibility
+   
+4. VOTE NON-TEAMMATES
+   - If no betrayal needed, vote high breakthrough good players
+
+5. FOLLOW MAJORITY
+   - If most players voting someone, consider joining to avoid suspicion
+
+CRITICAL EXAMPLES:
+
+Example 1: Exposed Teammate
+- Teammate No.2 is publicly accused as wolf
+- Most players are voting No.2
+- Your action: VOTE No.2 (betray to protect yourself)
+- Reasoning: "No.2's behavior is indeed suspicious, I agree"
+
+Example 2: Low IQ Teammate
+- Teammate No.3 has IQ=25 (very low)
+- Teammate No.3 made obvious mistakes
+- Your action: VOTE No.3 (sacrifice for team)
+- Reasoning: "No.3's logic doesn't make sense, suspicious"
+
+Example 3: High IQ Teammate
+- Teammate No.4 has IQ=85 (very high)
+- Teammate No.4 is slightly suspected
+- Your action: VOTE someone else (protect valuable teammate)
+- Reasoning: Vote a good player instead
+
+Example 4: All Non-Teammates
+- No teammates in candidate list
+- Your action: VOTE high breakthrough good player
+- Reasoning: Normal voting strategy
+
+Available candidates (INCLUDING TEAMMATES): {choices}
+
+REMEMBER: 
+- Candidates list INCLUDES your teammates
+- You CAN vote for teammates if strategically beneficial
+- Betraying exposed/low IQ teammates can SAVE you and other teammates
+- Self-preservation is the highest priority
+
 Return ONLY the player name you vote for, no analysis:
 """
 
@@ -526,6 +585,7 @@ Provide your kill target suggestion and reasoning:
 
 KILL_PROMPT = """{history}
 You are {name}, a Werewolf. Choose tonight's kill target.
+Your Werewolf teammates are: {teammates}
 
 【CODE-DRIVEN PRE-ANALYSIS】
 The system has filtered and ranked all candidates:
@@ -859,6 +919,7 @@ Return ONLY the player name you vote for, no analysis:
 
 SHERIFF_SPEECH_ORDER_PROMPT = """{history}
 You are {name}, newly elected Sheriff (Werewolf). Choose speaking order.
+Your Werewolf teammates are: {teammates}
 
 DECISION TREE - SPEECH ORDER SELECTION:
 

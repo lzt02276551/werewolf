@@ -187,7 +187,10 @@ class SeerAgent(BaseGoodAgent):
     
     def _format_checked_players(self) -> str:
         """
-        格式化检查结果
+        格式化检查结果（兼容模板格式）
+        
+        模板格式：{"No.3": "No.3 is a werewolf"}
+        企业级格式：{"No.3": {"is_wolf": True, "night": 1}}
         
         Returns:
             格式化的检查结果字符串
@@ -197,13 +200,23 @@ class SeerAgent(BaseGoodAgent):
             return "No checks performed yet."
         
         lines = []
-        for player, data in sorted(checked_players.items(), key=lambda x: x[1].get('night', 0)):
-            is_wolf = data.get('is_wolf', False)
-            night = data.get('night', 0)
-            result = "WOLF" if is_wolf else "GOOD"
-            lines.append(f"Night {night}: {player} → {result}")
+        for player, data in checked_players.items():
+            # 兼容两种格式
+            if isinstance(data, str):
+                # 模板格式：直接使用字符串
+                lines.append(f"{player}: {data}")
+            elif isinstance(data, dict):
+                # 企业级格式：从字典提取信息
+                is_wolf = data.get('is_wolf', False)
+                night = data.get('night', 0)
+                result = "WOLF" if is_wolf else "GOOD"
+                lines.append(f"Night {night}: {player} → {result}")
+            else:
+                # 未知格式，跳过
+                logger.warning(f"[FORMAT CHECK] Unknown format for {player}: {type(data)}")
+                continue
         
-        return "\n".join(lines)
+        return "\n".join(lines) if lines else "No checks performed yet."
     
     def _format_trust_summary(self, alive_players: List[str], my_name: str) -> str:
         """
@@ -231,7 +244,7 @@ class SeerAgent(BaseGoodAgent):
     
     def _determine_game_phase(self, current_day: int, alive_count: int) -> tuple:
         """
-        确定游戏阶段和策略
+        确定游戏阶段和策略（兼容模板格式）
         
         Args:
             current_day: 当前天数
@@ -241,7 +254,20 @@ class SeerAgent(BaseGoodAgent):
             (游戏阶段, 阶段策略)
         """
         checked_players = self.memory_dao.get_checked_players()
-        has_wolf_check = any(data.get('is_wolf', False) for data in checked_players.values())
+        
+        # 兼容两种格式检查是否有狼人验证
+        has_wolf_check = False
+        for player, data in checked_players.items():
+            if isinstance(data, str):
+                # 模板格式：检查字符串中是否包含"wolf"
+                if 'wolf' in data.lower() or 'werewolf' in data.lower():
+                    has_wolf_check = True
+                    break
+            elif isinstance(data, dict):
+                # 企业级格式：检查字典中的is_wolf字段
+                if data.get('is_wolf', False):
+                    has_wolf_check = True
+                    break
         
         if has_wolf_check:
             return ("Reveal Phase", "REVEAL immediately - you have wolf check, guide voting")
@@ -271,77 +297,252 @@ class SeerAgent(BaseGoodAgent):
     
     def _get_alive_count(self) -> int:
         """
-        获取存活人数
+        获取存活人数（企业级五星标准 - 多重降级策略）
         
         Returns:
             存活人数
             
         Raises:
-            ValueError: 如果无法获取存活人数
+            ValueError: 如果所有方法都无法获取存活人数
         """
+        # 策略1：从game_state获取
         game_state = self.memory_dao.get_game_state()
         alive_count = game_state.get('alive_count')
-        if alive_count:
+        if alive_count and isinstance(alive_count, int) and alive_count > 0:
             return alive_count
         
-        # 从发言历史和死亡玩家计算
+        # 策略2：从alive_players列表获取
+        alive_players = self.memory_dao.get('alive_players', [])
+        if alive_players and isinstance(alive_players, list):
+            return len(alive_players)
+        
+        # 策略3：从发言历史和死亡玩家计算
         speech_history = self.memory_dao.get_speech_history()
         dead_players = self.memory_dao.get_dead_players()
         
-        if not speech_history:
-            raise ValueError("无法获取存活人数：发言历史为空且game_state中没有alive_count")
+        if speech_history and isinstance(speech_history, dict):
+            all_players = set(speech_history.keys())
+            if dead_players and isinstance(dead_players, set):
+                alive = all_players - dead_players
+            else:
+                alive = all_players
+            
+            if alive:
+                return len(alive)
         
-        all_players = set(speech_history.keys())
-        alive = all_players - dead_players
-        
-        if not alive:
-            raise ValueError("无法获取存活人数：计算结果为0")
-        
-        return len(alive)
+        # 策略4：使用默认值（12人局）
+        logger.warning("无法准确获取存活人数，使用默认值12")
+        return 12
     
     def perceive(self, req=AgentReq):
         """
-        处理游戏事件（重写父类方法以添加预言家特有处理）
+        处理游戏事件（兼容模板接口 + 企业级增强）
+        
+        与12人狼人杀模板完全兼容，同时提供企业级增强功能
         
         Args:
             req: 游戏事件请求
         """
+        # 游戏开始 - 初始化（兼容模板）
+        if req.status == STATUS_START:
+            self.memory.clear()
+            self.memory.set_variable("name", req.name)
+            self.memory.set_variable("checked_players", {})
+            self.memory_dao.set_night_count(0)
+            self.memory_dao.set_day_count(0)
+            self.memory_dao.append_history("Host: Hello, your assigned role is [Seer], you are " + req.name)
+            logger.info(f"[SEER PERCEIVE] Game started, I am {req.name}")
+            return
+        
+        # 夜晚阶段
+        if req.status == STATUS_NIGHT:
+            self.memory_dao.append_history("Host: Night falls, everyone close your eyes")
+            # 增加夜晚计数
+            night_count = self.memory_dao.get_night_count()
+            self.memory_dao.set_night_count(night_count + 1)
+            logger.info(f"[SEER PERCEIVE] Night {night_count + 1}")
+            return
+        
         # 预言家特有事件：技能结果（验人结果）
         if req.status == STATUS_SKILL_RESULT:
             return self._handle_skill_result(req)
-        else:
-            # 其他事件使用父类处理
-            return super().perceive(req)
+        
+        # 夜晚信息（死亡公告）
+        if req.status == STATUS_NIGHT_INFO:
+            self.memory_dao.append_history(f"Host: It's daybreak! Last night's information is: {req.message}")
+            # 解析死亡玩家
+            if req.message and "No." in req.message:
+                import re
+                dead_players = re.findall(r'No\.\d+', req.message)
+                for player in dead_players:
+                    self.memory_dao.add_dead_player(player)
+                    # 更新信任分数（夜晚死亡的玩家很可能是好人）
+                    if hasattr(self, 'trust_score_manager') and self.trust_score_manager:
+                        try:
+                            trust_scores = self.memory_dao.get_trust_scores()
+                            self.trust_score_manager.analyze(
+                                player, 25, 0.8, 0.9, trust_scores
+                            )
+                            self.memory_dao.set_trust_scores(trust_scores)
+                        except Exception as e:
+                            logger.warning(f"Trust score update failed for {player}: {e}")
+            return
+        
+        # 讨论阶段
+        if req.status == STATUS_DISCUSS:
+            if req.name:
+                # 其他玩家发言
+                self.memory_dao.append_history(req.name + ': ' + req.message)
+                # 处理玩家消息（检测、分析）
+                if hasattr(self, '_process_player_message'):
+                    try:
+                        self._process_player_message(req.message, req.name)
+                    except Exception as e:
+                        logger.error(f"Process player message failed: {e}")
+            else:
+                # 主持人发言
+                day_count = self.memory_dao.get_day_count()
+                self.memory_dao.set_day_count(day_count + 1)
+                self.memory_dao.append_history(f'Host: Now entering day {day_count + 1}.')
+                self.memory_dao.append_history('Host: Each player describe your information.')
+            return
+        
+        # 投票阶段
+        if req.status == STATUS_VOTE:
+            self.memory_dao.append_history(f'Day {req.round} voting phase, {req.name} voted for {req.message}')
+            # 记录投票历史
+            voting_history = self.memory_dao.get_voting_history()
+            if req.name not in voting_history:
+                voting_history[req.name] = []
+            voting_history[req.name].append(req.message)
+            self.memory_dao.set_voting_history(voting_history)
+            return
+        
+        # 投票结果
+        if req.status == STATUS_VOTE_RESULT:
+            out_player = req.name if req.name else req.message
+            if out_player:
+                self.memory_dao.append_history('Host: Vote result is: {}.'.format(out_player))
+                self.memory_dao.add_dead_player(out_player)
+            else:
+                self.memory_dao.append_history('Host: No one is eliminated.')
+            return
+        
+        # 警长选举
+        if req.status == STATUS_SHERIFF_ELECTION:
+            self.memory_dao.append_history("Host: Players running for sheriff: " + req.message)
+            return
+        
+        # 警长竞选发言
+        if req.status == STATUS_SHERIFF_SPEECH:
+            self.memory_dao.append_history(req.name + " (campaign speech): " + req.message)
+            return
+        
+        # 警长投票
+        if req.status == STATUS_SHERIFF_VOTE:
+            self.memory_dao.append_history("Sheriff vote: " + req.name + " voted for " + req.message)
+            return
+        
+        # 警长结果
+        if req.status == STATUS_SHERIFF:
+            if req.name:
+                self.memory_dao.append_history("Host: Sheriff badge belongs to: " + req.name)
+                self.memory_dao.set_sheriff(req.name)
+            if req.message:
+                self.memory_dao.append_history(req.message)
+            return
+        
+        # 猎人/狼王开枪
+        if req.status == STATUS_HUNTER:
+            self.memory_dao.append_history("Hunter/Wolf King is: " + req.name + ", activating skill, choosing to shoot")
+            return
+        
+        # 猎人/狼王开枪结果
+        if req.status == STATUS_HUNTER_RESULT:
+            if req.message:
+                self.memory_dao.append_history("Hunter/Wolf King is: " + req.name + ", shot and took down " + req.message)
+                self.memory_dao.add_dead_player(req.message)
+            else:
+                self.memory_dao.append_history("Hunter/Wolf King is: " + req.name + ", did not take down anyone")
+            return
+        
+        # 警长发言顺序
+        if req.status == STATUS_SHERIFF_SPEECH_ORDER:
+            if "Counter-clockwise" in req.message or "小号" in req.message:
+                self.memory_dao.append_history("Host: Sheriff speech order is lower numbers first")
+            else:
+                self.memory_dao.append_history("Host: Sheriff speech order is higher numbers first")
+            return
+        
+        # 警长PK发言
+        if req.status == STATUS_SHERIFF_PK:
+            self.memory_dao.append_history(f"Sheriff PK speech: {req.name}: {req.message}")
+            return
+        
+        # 游戏结果
+        if req.status == STATUS_RESULT:
+            self.memory_dao.append_history(req.message)
+            # 处理游戏结束
+            if hasattr(self, '_handle_game_end'):
+                try:
+                    self._handle_game_end(req)
+                except Exception as e:
+                    logger.error(f"Handle game end failed: {e}")
+            return
+        
+        # 未知状态
+        logger.warning(f"[SEER PERCEIVE] Unknown status: {req.status}")
+        return
     
     def _handle_skill_result(self, req):
-        """处理技能结果（检查结果）"""
+        """
+        处理技能结果（检查结果）- 兼容模板 + 企业级增强
+        
+        模板兼容：
+        - 记录到memory.checked_players
+        - 记录到history
+        
+        企业级增强：
+        - 更新信任分数系统
+        - 记录夜晚计数
+        - 详细日志
+        
+        Args:
+            req: 技能结果请求
+        """
+        # 记录历史（兼容模板）
         self.memory_dao.append_history(req.message)
         
         # 解析检查结果
         target_player = req.name
         is_wolf = 'wolf' in req.message.lower() or 'werewolf' in req.message.lower()
         
-        # 记录检查结果
+        # 记录检查结果（兼容模板格式）
         night_count = self.memory_dao.get_night_count()
         self.memory_dao.add_checked_player(target_player, is_wolf, night_count)
         
-        # 更新信任分数
-        trust_scores = self.memory_dao.get_trust_scores()
-        
-        if is_wolf:
-            new_score = self.trust_score_manager.analyze(
-                target_player, self.config.TRUST_WOLF_CHECK, 1.0, 1.0,
-                trust_scores
-            )
+        # 企业级增强：更新信任分数系统
+        if hasattr(self, 'trust_score_manager') and self.trust_score_manager:
+            try:
+                trust_scores = self.memory_dao.get_trust_scores()
+                
+                if is_wolf:
+                    new_score = self.trust_score_manager.analyze(
+                        target_player, self.config.TRUST_WOLF_CHECK, 1.0, 1.0,
+                        trust_scores
+                    )
+                else:
+                    new_score = self.trust_score_manager.analyze(
+                        target_player, self.config.TRUST_GOOD_CHECK, 1.0, 1.0,
+                        trust_scores
+                    )
+                
+                self.memory_dao.set_trust_scores(trust_scores)
+                logger.info(f"[SEER CHECK] {target_player} is {'WOLF' if is_wolf else 'GOOD'}, trust: {new_score:.1f}")
+            except Exception as e:
+                logger.warning(f"[SEER CHECK] Trust score update failed: {e}")
         else:
-            new_score = self.trust_score_manager.analyze(
-                target_player, self.config.TRUST_GOOD_CHECK, 1.0, 1.0,
-                trust_scores
-            )
-        
-        self.memory_dao.set_trust_scores(trust_scores)
-        
-        logger.info(f"Check result: {target_player} is {'WOLF' if is_wolf else 'GOOD'}, trust score: {new_score}")
+            logger.info(f"[SEER CHECK] {target_player} is {'WOLF' if is_wolf else 'GOOD'}")
     
 
     
@@ -391,7 +592,7 @@ class SeerAgent(BaseGoodAgent):
     
     def _interact_discuss(self, req) -> AgentResp:
         """
-        处理讨论阶段的发言（使用父类的LLM生成方法）
+        处理讨论阶段的发言（使用父类的LLM生成方法）- 企业级五星标准
         
         Args:
             req: 讨论请求
@@ -414,9 +615,18 @@ class SeerAgent(BaseGoodAgent):
         
         # 正常讨论阶段 - 使用父类的LLM生成方法
         try:
-            # 获取基本信息
-            current_day = self._get_current_day()
-            alive_count = self._get_alive_count()
+            # 获取基本信息（带边界检查）
+            try:
+                current_day = self._get_current_day()
+            except Exception as e:
+                logger.warning(f"获取当前天数失败: {e}，使用默认值1")
+                current_day = 1
+            
+            try:
+                alive_count = self._get_alive_count()
+            except Exception as e:
+                logger.warning(f"获取存活人数失败: {e}，使用默认值12")
+                alive_count = 12
             
             # 格式化检查结果
             checked_players_str = self._format_checked_players()
@@ -448,6 +658,9 @@ class SeerAgent(BaseGoodAgent):
             logger.info(f"[SEER DISCUSS] Generated speech (length: {len(result)})")
             return AgentResp(success=True, result=result, errMsg=None)
             
+        except RuntimeError:
+            # 重新抛出RuntimeError
+            raise
         except Exception as e:
             logger.error(f"[SEER DISCUSS] Error generating speech: {e}")
             import traceback
@@ -499,50 +712,103 @@ class SeerAgent(BaseGoodAgent):
     
     def _interact_vote(self, req) -> AgentResp:
         """
-        处理投票决策（使用父类的投票决策方法）
+        处理投票决策（使用父类的投票决策方法）- 企业级五星标准
 
         Args:
             req: 投票请求
 
         Returns:
             AgentResp: 投票目标
+            
+        Raises:
+            ValueError: 如果候选人列表为空或无效
         """
         self.memory_dao.append_history('Host: It\'s time to vote. Everyone, please point to the person you think is likely a werewolf.')
 
+        # 输入验证
+        if not req or not req.message:
+            raise ValueError("投票请求无效：message为空")
+        
+        if not isinstance(req.message, str):
+            raise ValueError(f"投票请求message类型错误：期望str，实际{type(req.message)}")
+
         my_name = self.memory_dao.get_my_name()
-        choices = [name for name in req.message.split(",") if name != my_name]
+        
+        # 解析候选人列表（增强边界检查）
+        all_choices = [name.strip() for name in req.message.split(",") if name.strip()]
+        
+        if not all_choices:
+            raise ValueError("投票候选人列表为空")
+        
+        choices = [name for name in all_choices if name != my_name]
+        
+        # 如果过滤后为空，使用原始列表（可能是测试场景）
+        if not choices:
+            logger.warning(f"过滤后候选人为空（原始: {all_choices}），使用原始列表")
+            choices = all_choices
+        
+        # 最终验证
+        if not choices:
+            raise ValueError(f"无法获取有效的投票候选人：原始message='{req.message}'")
 
         # 使用父类的投票决策方法（自动融合ML）
-        target = self._make_vote_decision(choices)
-
-        logger.info(f"[SEER VOTE] Target: {target}")
-        return AgentResp(success=True, result=target, errMsg=None)
+        try:
+            target = self._make_vote_decision(choices)
+            
+            if not target or target not in choices:
+                logger.warning(f"投票决策返回无效目标: {target}，使用第一个候选人")
+                target = choices[0]
+            
+            logger.info(f"[SEER VOTE] Target: {target}")
+            return AgentResp(success=True, result=target, errMsg=None)
+            
+        except Exception as e:
+            logger.error(f"[SEER VOTE] 投票决策失败: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"预言家投票决策失败: {e}") from e
 
     
     def _interact_skill(self, req) -> AgentResp:
         """
-        处理技能使用（检查决策）- 使用决策器
+        处理技能使用（检查决策）- 使用决策器（企业级五星标准）
         
         Args:
             req: 技能请求
             
         Returns:
             AgentResp: 检查目标
+            
+        Raises:
+            ValueError: 如果候选人列表为空或无效
         """
+        # 输入验证
+        if not req or not req.message:
+            raise ValueError("技能请求无效：message为空")
+        
         checked_players = self.memory_dao.get_checked_players()
         my_name = self.memory_dao.get_my_name()
         
-        # 解析候选人列表
+        # 解析候选人列表（增强边界检查）
+        if not isinstance(req.message, str):
+            raise ValueError(f"技能请求message类型错误：期望str，实际{type(req.message)}")
+        
         all_choices = [name.strip() for name in req.message.split(",") if name.strip()]
+        
+        if not all_choices:
+            raise ValueError("技能请求候选人列表为空")
+        
+        # 过滤掉自己
         choices = [name for name in all_choices if name != my_name]
         
+        # 如果过滤后为空，使用原始列表（可能是测试场景）
         if not choices:
-            logger.warning("No valid choices for skill, using first available")
+            logger.warning(f"过滤后候选人为空（原始: {all_choices}），使用原始列表")
             choices = all_choices
         
+        # 最终验证
         if not choices:
-            logger.error("No choices available for skill")
-            return AgentResp(success=True, result="No.1", skillTargetPlayer="No.1", errMsg=None)
+            raise ValueError(f"无法获取有效的检查候选人：原始message='{req.message}'")
         
         # 构建上下文
         context = {
@@ -559,10 +825,22 @@ class SeerAgent(BaseGoodAgent):
         }
         
         # 使用决策器做出检查决策
-        target, reason = self.check_decision_maker.decide(choices, context)
-        
-        logger.info(f"[SEER SKILL] Target: {target}, Reason: {reason}")
-        return AgentResp(success=True, result=target, skillTargetPlayer=target, errMsg=None)
+        try:
+            target, reason = self.check_decision_maker.decide(choices, context)
+            
+            logger.info(f"[SEER SKILL] Target: {target}, Reason: {reason}")
+            return AgentResp(success=True, result=target, skillTargetPlayer=target, errMsg=None)
+            
+        except ValueError as e:
+            # 决策失败，记录错误并抛出
+            logger.error(f"[SEER SKILL] 检查决策失败: {e}")
+            raise RuntimeError(f"预言家检查决策失败: {e}") from e
+        except Exception as e:
+            # 未预期的错误
+            logger.error(f"[SEER SKILL] 未预期的错误: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"预言家检查决策遇到未预期错误: {e}") from e
     
     def _interact_sheriff_election(self, req) -> AgentResp:
         """处理警长选举决策（使用决策器）"""

@@ -255,7 +255,7 @@ class WolfKingAgent(BaseWolfAgent):
     
     def perceive(self, req: AgentReq) -> AgentResp:
         """
-        感知阶段（覆盖以添加开枪处理）
+        感知阶段（狼王不需要特殊处理）
         
         Args:
             req: Agent请求对象
@@ -263,18 +263,8 @@ class WolfKingAgent(BaseWolfAgent):
         Returns:
             Agent响应对象
         """
-        status = req.status
-        logger.info(f"[WOLF KING PERCEIVE] Status: {status}")
-        
-        try:
-            if status == STATUS_SKILL:
-                return self._handle_kill(req)
-            
-            return AgentResp(success=True, result=None, errMsg=None)
-            
-        except Exception as e:
-            logger.error(f"[PERCEIVE] Error: {e}", exc_info=True)
-            return AgentResp(success=True, result=None, errMsg=None)
+        # 狼王的所有逻辑都在interact阶段处理
+        return AgentResp(success=True, result=None, errMsg=None)
     
     def interact(self, req: AgentReq) -> AgentResp:
         """
@@ -290,7 +280,11 @@ class WolfKingAgent(BaseWolfAgent):
         logger.info(f"[WOLF KING INTERACT] Status: {status}")
         
         try:
-            # 狼王特有：处理开枪
+            # 狼王特有：处理开枪和击杀
+            if status == STATUS_SKILL:
+                return self._handle_skill(req)
+            
+            # 狼王特有：处理开枪（被淘汰时）
             if status == STATUS_HUNTER or status == STATUS_HUNTER_RESULT:
                 return self._handle_shoot(req)
             
@@ -358,6 +352,84 @@ class WolfKingAgent(BaseWolfAgent):
         
         logger.info(f"[WOLF KING SHOOT] Final target: {target}")
         return AgentResp(success=True, result=target, skillTargetPlayer=target, errMsg=None)
+    
+    def _handle_skill(self, req: AgentReq) -> AgentResp:
+        """
+        处理技能（STATUS_SKILL）
+        
+        根据req.name和req.message判断是击杀还是开枪：
+        - 如果name包含"shoot"或message包含"last words"/"遗言"，则是开枪
+        - 否则是击杀
+        
+        这与模板的处理方式一致
+        """
+        message = req.message or ""
+        name = req.name or ""
+        
+        # 判断是否是开枪技能
+        is_shoot = (
+            "shoot" in name.lower() or 
+            "last words" in message.lower() or 
+            "遗言" in message or
+            "请发表最后的遗言" in message or
+            "please give your final words" in message.lower()
+        )
+        
+        if is_shoot:
+            # 开枪技能
+            return self._handle_shoot_skill(req)
+        else:
+            # 击杀技能
+            return self._handle_kill(req)
+    
+    def _handle_shoot_skill(self, req: AgentReq) -> AgentResp:
+        """
+        处理开枪技能（STATUS_SKILL中的开枪）
+        
+        与模板一致的处理方式
+        """
+        teammates = self.memory.load_variable("teammates") or []
+        my_name = self.memory.load_variable("name") or ""
+        
+        # 检查是否可以开枪
+        can_shoot = self.memory.load_variable("can_shoot")
+        if not can_shoot:
+            logger.info("[WOLF KING] Cannot shoot (ability already used)")
+            return AgentResp(success=True, result="don't shoot", skillTargetPlayer=None, errMsg=None)
+        
+        # 从message中解析候选人（移除"请发表最后的遗言"等文本）
+        message = req.message or ""
+        message = message.replace("please give your final words", "").replace("请发表最后的遗言", "")
+        
+        candidates = [name.strip() for name in message.split(",")
+                     if name.strip() and name.strip() != my_name and name.strip() not in teammates]
+        
+        if not candidates:
+            logger.warning("[WOLF KING] No shoot candidates provided")
+            return AgentResp(success=True, result="don't shoot", skillTargetPlayer=None, errMsg=None)
+        
+        # 决定是否开枪
+        target = self._make_shoot_decision(candidates)
+        
+        if not target:
+            logger.info("[WOLF KING] Decided not to shoot")
+            return AgentResp(success=True, result="don't shoot", skillTargetPlayer=None, errMsg=None)
+        
+        # 验证目标
+        target = self._validate_player_name(target, candidates)
+        
+        # 标记已使用技能
+        self.memory.set_variable("can_shoot", False)
+        
+        logger.info(f"[WOLF KING SHOOT SKILL] Final target: {target}")
+        
+        # 返回格式与模板一致
+        return AgentResp(
+            success=True, 
+            result=target, 
+            skillTargetPlayer=None if target in ["don't shoot", "不开枪"] else target, 
+            errMsg=None
+        )
     
     # ==================== 从WolfAgent复制的方法 ====================
     
@@ -627,6 +699,7 @@ class WolfKingAgent(BaseWolfAgent):
     def _handle_sheriff_pk(self, req: AgentReq) -> AgentResp:
         """处理警长PK发言"""
         my_name = self.memory.load_variable("name") or ""
+        teammates = self.memory.load_variable("teammates") or []
         can_shoot = self.memory.load_variable("can_shoot")
         shoot_info = "can shoot" if can_shoot else "already shot"
         
@@ -636,6 +709,7 @@ class WolfKingAgent(BaseWolfAgent):
         prompt = format_prompt(SHERIFF_PK_PROMPT, {
             "history": "\n".join(history[-30:]) if history else "",
             "name": my_name,
+            "teammates": ", ".join(teammates),
             "shoot_info": shoot_info
         })
         
@@ -646,8 +720,18 @@ class WolfKingAgent(BaseWolfAgent):
     
     def _handle_result(self, req: AgentReq) -> AgentResp:
         """处理游戏结果"""
-        history_text = "\n".join(req.history)
-        result = "win" if "Wolf faction wins" in history_text else "lose"
+        # 优先从req.message中判断
+        message = req.message or ""
+        
+        # 如果message中没有结果信息，再从历史记录中查找
+        if "Wolf faction wins" not in message and "Good faction wins" not in message:
+            history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
+            history_text = "\n".join(history)
+            combined_text = history_text + " " + message
+        else:
+            combined_text = message
+        
+        result = "win" if "Wolf faction wins" in combined_text else "lose"
         self.memory.set_variable("game_result", result)
         
         logger.info(f"[WOLF KING] Game ended: {result}")
@@ -662,20 +746,23 @@ class WolfKingAgent(BaseWolfAgent):
         - 遗言
         - 其他警长相关操作
         """
+        # 检查req.message来判断是否是警长转移
+        message = (req.message or "").lower()
+        
+        # 如果message包含候选人列表（逗号分隔），则是警长转移
+        if "," in req.message:
+            return self._handle_sheriff_transfer(req)
+        
         # 从内存获取历史记录
         history = self.memory.load_history() if hasattr(self.memory, 'load_history') else []
         history_text = "\n".join(history[-5:]).lower() if history else ""
         
-        # 也检查当前消息
-        current_message = (req.message or "").lower()
-        combined_text = history_text + " " + current_message
-        
         # 判断是否是警长转移
-        if "transfer" in combined_text or "badge" in combined_text or "警徽" in combined_text:
+        if "transfer" in history_text or "badge" in history_text or "警徽" in history_text:
             return self._handle_sheriff_transfer(req)
         
         # 判断是否是遗言
-        if "last words" in combined_text or "遗言" in combined_text or "final" in combined_text:
+        if "last words" in history_text or "遗言" in history_text or "final" in history_text:
             return self._handle_last_words(req)
         
         # 默认返回成功

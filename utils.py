@@ -315,7 +315,7 @@ class TimestampUtils:
     @staticmethod
     def parse_timestamp(timestamp_str: str) -> Optional[datetime]:
         """
-        解析时间戳
+        解析时间戳（增强错误处理）
         
         Args:
             timestamp_str: 时间戳字符串（ISO格式）
@@ -330,11 +330,20 @@ class TimestampUtils:
             >>> dt = TimestampUtils.parse_timestamp("2024-01-01T12:00:00")
             >>> if dt is not None:
             ...     print(dt.year)
+            >>> else:
+            ...     print("Invalid timestamp")
         """
+        if not timestamp_str or not isinstance(timestamp_str, str):
+            logger.warning(f"Invalid timestamp_str type: {type(timestamp_str)}")
+            return None
+        
         try:
             return datetime.fromisoformat(timestamp_str)
         except (ValueError, TypeError) as e:
             logger.warning(f"Failed to parse timestamp '{timestamp_str}': {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error parsing timestamp '{timestamp_str}': {e}")
             return None
 
 

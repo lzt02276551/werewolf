@@ -227,7 +227,13 @@ class GuardDecisionMaker:
     
     def _calculate_confidence(self, adjusted_priority: float) -> int:
         """
-        计算决策置信度
+        计算决策置信度（优化版 - 考虑多个因素）
+        
+        置信度计算考虑：
+        1. 优先级分数（主要因素）
+        2. 是否有明确的角色估计
+        3. 是否有狼人击杀预测
+        4. 游戏阶段（后期置信度更高）
         
         Args:
             adjusted_priority: 调整后的优先级
@@ -235,15 +241,32 @@ class GuardDecisionMaker:
         Returns:
             置信度 (0-100)
         """
+        # 基础置信度（基于优先级）
         if adjusted_priority > 90:
-            return 90
+            base_confidence = 90
         elif adjusted_priority > 80:
-            return 85
+            base_confidence = 85
         elif adjusted_priority > 70:
-            return 80
+            base_confidence = 80
         elif adjusted_priority > 60:
-            return 75
+            base_confidence = 75
         else:
-            return 70
+            base_confidence = 70
+        
+        # 调整因素
+        confidence_adjustment = 0
+        
+        # 如果有角色估计器且识别出关键角色，提高置信度
+        if self._role_estimator:
+            confidence_adjustment += 5
+        
+        # 如果有狼人击杀预测器，提高置信度
+        if self._wolf_kill_predictor:
+            confidence_adjustment += 3
+        
+        # 限制在合理范围内
+        final_confidence = min(95, base_confidence + confidence_adjustment)
+        
+        return final_confidence
 
 

@@ -9,6 +9,9 @@ from agent_build_sdk.utils.logger import logger
 from werewolf.core.base_components import BaseDecisionMaker
 from werewolf.common.utils import DataValidator
 from .config import HunterConfig
+from .performance import monitor_performance
+from .optimizer import DecisionOptimizer
+from .validators import IntegrityChecker
 
 if TYPE_CHECKING:
     from .analyzers import WolfProbabilityCalculator, ThreatLevelAnalyzer, MemoryDAO
@@ -36,7 +39,12 @@ class ShootDecisionMaker(BaseDecisionMaker):
         self.threat_analyzer = threat_analyzer
         self.memory_dao = memory_dao
         self.validator = DataValidator()
+        
+        # 添加决策优化器
+        self.optimizer = DecisionOptimizer()
+        logger.info("✓ ShootDecisionMaker initialized with optimizer")
     
+    @monitor_performance
     def decide(
         self, 
         candidates: List[str], 
@@ -122,19 +130,33 @@ class ShootDecisionMaker(BaseDecisionMaker):
         score = sorted_candidates[0][1]
         confidence = confidence_scores[target]
         
-        # 置信度和分数阈值检查（使用配置常量）
-        min_confidence = self.config.shoot_confidence_threshold  # 0.4
-        min_score = self.config.vote_score_threshold  # 35.0
+        # 使用优化器获取动态阈值
+        min_confidence = self.optimizer.get_threshold('shoot_min_confidence')
+        min_score = self.optimizer.get_threshold('shoot_min_score')
         
-        if confidence < min_confidence and score < min_score:
-            return ("Do Not Shoot", f"Low confidence ({confidence:.2%}) and score ({score:.1f})", shoot_scores)
+        # 如果优化器未初始化，使用配置默认值
+        if min_confidence == 0.0:
+            min_confidence = self.config.shoot_confidence_threshold
+        if min_score == 0.0:
+            min_score = self.config.vote_score_threshold
         
-        if score < min_score:
-            return ("Do Not Shoot", f"All scores below threshold (highest: {score:.1f})", shoot_scores)
+        # 获取优化器建议
+        should_shoot, recommendation = self.optimizer.get_recommendation('shoot', score, confidence)
+        
+        if not should_shoot:
+            logger.info(f"[SHOOT OPTIMIZER] Recommendation: Do Not Shoot - {recommendation}")
+            return ("Do Not Shoot", recommendation, shoot_scores)
+        
+        # 验证决策完整性
+        valid, error = IntegrityChecker.check_decision_integrity(target, valid_candidates, shoot_scores)
+        if not valid:
+            logger.error(f"[SHOOT INTEGRITY] Decision integrity check failed: {error}")
+            return ("Do Not Shoot", f"Integrity check failed: {error}", shoot_scores)
         
         # 生成理由
         reason = self._generate_shoot_reason(target, score, confidence)
         
+        logger.info(f"[SHOOT OPTIMIZER] Recommendation: Shoot {target} - {recommendation}")
         self.log_decision(target, reason)
         return (target, reason, shoot_scores)
     
@@ -191,7 +213,11 @@ class ShootDecisionMaker(BaseDecisionMaker):
         candidates: List[str]
     ) -> List[str]:
         """
-        识别投票领袖
+        识别投票领袖（增强类型安全 + 修复空列表bug）
+        
+        投票领袖定义：
+        - 多次投票给目标玩家的玩家
+        - 按投票次数排序
         
         Args:
             voting_history: 投票历史
@@ -201,38 +227,109 @@ class ShootDecisionMaker(BaseDecisionMaker):
         Returns:
             投票领袖列表（按积极程度排序）
         """
+        # 类型验证
+        if not isinstance(voting_history, dict):
+            logger.warning(f"voting_history is not dict: {type(voting_history)}")
+            return []
+        
+        if not isinstance(target, str) or not target:
+            logger.warning(f"Invalid target: {target}")
+            return []
+        
+        if not isinstance(candidates, list):
+            logger.warning(f"candidates is not list: {type(candidates)}")
+            return []
+        
         vote_counts = {}
         
         for voter, votes in voting_history.items():
-            if voter in candidates and isinstance(votes, list):
-                # 统计投票给目标的次数
-                target_votes = sum(1 for v in votes if v == target)
+            # 类型安全检查
+            if not isinstance(voter, str) or voter not in candidates:
+                continue
+            
+            if not isinstance(votes, list):
+                logger.debug(f"Skipping {voter}: votes is not list ({type(votes)})")
+                continue
+            
+            # 统计投票给目标的次数（带类型检查）
+            try:
+                target_votes = sum(1 for v in votes if isinstance(v, str) and v == target)
                 if target_votes > 0:
                     vote_counts[voter] = target_votes
+            except (TypeError, ValueError) as e:
+                logger.debug(f"Error counting votes for {voter}: {e}")
+                continue
         
-        # 按投票次数排序
-        sorted_leaders = sorted(vote_counts.items(), key=lambda x: x[1], reverse=True)
-        return [leader for leader, _ in sorted_leaders]
+        # 如果没有找到投票领袖，返回空列表（修复bug）
+        if not vote_counts:
+            logger.debug(f"[VOTE LEADERS] No vote leaders found for target {target}")
+            return []
+        
+        # 按投票次数排序（带异常处理）
+        try:
+            sorted_leaders = sorted(vote_counts.items(), key=lambda x: x[1], reverse=True)
+            leaders = [leader for leader, _ in sorted_leaders]
+            logger.debug(f"[VOTE LEADERS] Found {len(leaders)} leaders: {leaders}")
+            return leaders
+        except (TypeError, ValueError) as e:
+            logger.error(f"Error sorting vote leaders: {e}")
+            return []
     
     def _calculate_shoot_confidence(self, player: str) -> float:
-        """计算开枪置信度（0.0-1.0）"""
-        confidence = 0.5
+        """
+        计算开枪置信度（0.0-1.0）- 企业级五星算法
         
-        # 投票数据样本量
+        置信度评估维度：
+        1. 投票数据样本量（最多+0.3）
+        2. 发言数据样本量（最多+0.15）
+        3. 强证据存在（+0.2）
+        4. 游戏阶段调整
+        
+        Args:
+            player: 玩家名称
+            
+        Returns:
+            置信度（0.0-1.0）
+        """
+        confidence = 0.5  # 基础置信度
+        
+        # 1. 投票数据样本量（带类型检查和验证）
         voting_results = self.memory_dao.get_voting_results()
+        if not isinstance(voting_results, dict):
+            logger.warning(f"voting_results is not dict: {type(voting_results)}")
+            voting_results = {}
+        
         if player in voting_results:
             results = voting_results[player]
             if isinstance(results, list):
-                sample_count = len([r for r in results if self.validator.validate_voting_record(r)])
+                # 验证每个结果的格式
+                valid_results = []
+                for r in results:
+                    try:
+                        if self.validator.validate_voting_record(r):
+                            valid_results.append(r)
+                    except (TypeError, AttributeError) as e:
+                        logger.debug(f"Invalid voting record: {e}")
+                        continue
+                
+                sample_count = len(valid_results)
+                # 样本越多，置信度越高（最多+0.3）
                 confidence += min(0.3, sample_count * 0.06)
         
-        # 发言数据样本量
+        # 2. 发言数据样本量（带类型检查）
         speech_history = self.memory_dao.get_speech_history()
-        if player in speech_history:
-            speech_count = len(speech_history[player])
-            confidence += min(0.15, speech_count * 0.03)
+        if not isinstance(speech_history, dict):
+            logger.warning(f"speech_history is not dict: {type(speech_history)}")
+            speech_history = {}
         
-        # 强证据
+        if player in speech_history:
+            speeches = speech_history[player]
+            if isinstance(speeches, list):
+                speech_count = len(speeches)
+                # 发言越多，置信度越高（最多+0.15）
+                confidence += min(0.15, speech_count * 0.03)
+        
+        # 3. 强证据（注入攻击或虚假引用）
         injection_attempts = self.memory_dao.get_injection_attempts()
         false_quotations = self.memory_dao.get_false_quotations()
         
@@ -245,50 +342,107 @@ class ShootDecisionMaker(BaseDecisionMaker):
             logger.warning(f"false_quotations is not a list: {type(false_quotations)}")
             false_quotations = []
         
-        has_strong_evidence = (
-            any(isinstance(att, dict) and att.get("player") == player for att in injection_attempts) or
-            any(isinstance(fq, dict) and fq.get("accuser") == player for fq in false_quotations)
-        )
+        # 检查是否有强证据（带异常处理）
+        has_injection = False
+        has_false_quote = False
         
-        if has_strong_evidence:
+        try:
+            has_injection = any(
+                isinstance(att, dict) and att.get("player") == player 
+                for att in injection_attempts
+            )
+        except (TypeError, AttributeError) as e:
+            logger.debug(f"Error checking injection attempts: {e}")
+        
+        try:
+            has_false_quote = any(
+                isinstance(fq, dict) and fq.get("accuser") == player 
+                for fq in false_quotations
+            )
+        except (TypeError, AttributeError) as e:
+            logger.debug(f"Error checking false quotations: {e}")
+        
+        if has_injection or has_false_quote:
             confidence += 0.2
         
-        return min(1.0, confidence)
+        # 确保置信度在有效范围内
+        return min(1.0, max(0.0, confidence))
     
     def _calculate_shoot_risk_penalty(self, player: str) -> float:
-        """计算开枪风险惩罚（0-50）"""
+        """
+        计算开枪风险惩罚（0-50）- 企业级五星算法
+        
+        风险评估维度：
+        1. 角色声称（预言家/女巫/守卫）
+        2. 信任分数（高信任=高风险）
+        3. 行为验证（声称+行为匹配）
+        
+        Args:
+            player: 玩家名称
+            
+        Returns:
+            风险惩罚（0-50）
+        """
         penalty = 0.0
         
+        # 1. 获取发言历史（带类型检查）
         speech_history = self.memory_dao.get_speech_history()
+        if not isinstance(speech_history, dict):
+            logger.warning(f"speech_history is not dict: {type(speech_history)}")
+            speech_history = {}
         
         if player in speech_history:
             speeches = speech_history[player]
-            combined_speech = " ".join(speeches).lower()
+            if not isinstance(speeches, list):
+                logger.warning(f"speeches for {player} is not list: {type(speeches)}")
+                speeches = []
             
+            # 合并所有发言（安全处理）
+            combined_speech = " ".join(
+                str(s).lower() for s in speeches if isinstance(s, str)
+            )
+            
+            # 2. 预言家声称检测
             if "checked" in combined_speech or "verified" in combined_speech:
                 if "seer" in combined_speech or "i am" in combined_speech:
+                    # 明确声称预言家
                     penalty += 30
                 else:
+                    # 暗示预言家
                     penalty += 20
             
+            # 3. 女巫声称检测
             if "saved" in combined_speech or "poison" in combined_speech:
                 if "witch" in combined_speech or "i am" in combined_speech:
+                    # 明确声称女巫
                     penalty += 25
                 else:
+                    # 暗示女巫
                     penalty += 15
             
+            # 4. 守卫声称检测
             if "protected" in combined_speech or "guard" in combined_speech:
+                # 守卫声称
                 penalty += 15
         
+        # 5. 信任分数风险（高信任=高风险）
         trust_scores = self.memory_dao.get_trust_scores()
+        if not isinstance(trust_scores, dict):
+            logger.warning(f"trust_scores is not dict: {type(trust_scores)}")
+            trust_scores = {}
+        
         trust_score = trust_scores.get(player, 50)
+        if not isinstance(trust_score, (int, float)):
+            logger.warning(f"Invalid trust_score for {player}: {type(trust_score)}, using 50")
+            trust_score = 50
         
         if trust_score >= 80:
             penalty += 20
         elif trust_score >= 70:
             penalty += 12
         
-        return min(50, penalty)
+        # 确保惩罚在有效范围内
+        return min(50, max(0, penalty))
     
     def _generate_shoot_reason(self, target: str, score: float, confidence: float) -> str:
         """生成开枪理由"""

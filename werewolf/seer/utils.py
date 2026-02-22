@@ -59,7 +59,8 @@ class SpeechTruncator:
         if last_period > max_length * 0.8:
             return truncated[:last_period + 1]
         
-        return truncated + "..."
+        # 确保不超过最大长度（减去省略号的长度）
+        return truncated[:max_length - 3] + "..."
 
 
 class PlayerExtractor:

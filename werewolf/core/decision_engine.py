@@ -443,16 +443,17 @@ class EnhancedDecisionEngine:
             from ml_enhanced.feature_extractor import StandardFeatureExtractor
             
             data = player_data.get(player, {})
-            features = StandardFeatureExtractor.extract_player_features(
-                player, data, context
-            )
-            return StandardFeatureExtractor.features_to_array(features)
+            # 使用正确的方法名：extract_features（直接返回numpy数组）
+            features = StandardFeatureExtractor.extract_features(data)
+            return features
         except ImportError as e:
             logger.error(f"无法导入StandardFeatureExtractor: {e}")
             # 返回默认特征向量
             return np.zeros(19)  # 假设19个特征
         except Exception as e:
-            logger.error(f"特征提取失败: {e}", exc_info=True)
+            logger.error(f"特征提取失败: {e}")
+            import traceback
+            traceback.print_exc()
             return np.zeros(19)
     
     def _dynamic_fusion(

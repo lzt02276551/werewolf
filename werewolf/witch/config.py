@@ -6,50 +6,32 @@
 """
 
 from dataclasses import dataclass
+from agent_build_sdk.utils.logger import logger
 from werewolf.core.base_good_config import BaseGoodConfig
 
 
 @dataclass
 class WitchConfig(BaseGoodConfig):
     """
-    女巫代理人配置（继承BaseGoodConfig）
+    女巫代理人配置（继承BaseGoodConfig）- 企业级五星标准
     
-    继承所有共享配置，只定义女巫特有配置：
-    - 解药使用策略
-    - 毒药使用策略
-    - 角色价值评分
+    女巫规则：
+    - 解药只能用一次，可以救任何被狼人杀死的玩家（包括自己）
+    - 毒药只能用一次，可以毒死任何玩家
+    - 策略：有人倒下基本都救，但要避免明显的自刀
     """
     
     # ==================== 解药使用阈值 ====================
-    ANTIDOTE_SCORE_THRESHOLD: int = 50  # 解药使用最低分数
-    ANTIDOTE_FIRST_NIGHT_ALWAYS: bool = True  # 首夜必救
+    ANTIDOTE_SCORE_THRESHOLD: int = 45  # 解药使用最低分数（降低阈值，倾向于救人）
+    ANTIDOTE_FIRST_NIGHT_MIN_TRUST: int = 15  # 首夜最低信任阈值（配置化）
     
     # ==================== 毒药使用阈值 ====================
     POISON_SCORE_THRESHOLD: int = 70  # 毒药使用最低分数
+    POISON_ENDGAME_THRESHOLD: int = 80  # 残局毒药使用阈值（更谨慎）
     
-    # ==================== 信任分数阈值（继承父类，但确保存在）====================
-    # 这些值继承自BaseGoodConfig，但在这里明确声明以便使用
+    # ==================== 信任分数阈值（继承父类）====================
     # TRUST_VERY_LOW: int = 20  # 极低信任（继承）
     # TRUST_LOW: int = 35  # 低信任（继承）
-    
-    # ==================== 角色价值评分 ====================
-    ROLE_VALUE_SEER: int = 100
-    ROLE_VALUE_GUARD: int = 85
-    ROLE_VALUE_STRONG_VILLAGER: int = 70
-    ROLE_VALUE_HUNTER: int = 55
-    ROLE_VALUE_VILLAGER: int = 40
-    ROLE_VALUE_WOLF: int = 0
-    
-    # ==================== 威胁等级评分 ====================
-    THREAT_SHERIFF: int = 20
-    THREAT_HIGH_SPEECH: int = 15
-    THREAT_LEADS_DISCUSSION: int = 10
-    THREAT_LOGICAL: int = 10
-    
-    # ==================== 首夜策略 ====================
-    FIRST_NIGHT_STRATEGY_ALWAYS_SAVE: str = "always_save"
-    FIRST_NIGHT_STRATEGY_OBSERVE: str = "observe_first"
-    DEFAULT_FIRST_NIGHT_STRATEGY: str = "always_save"
     
     def __post_init__(self):
         """初始化后处理，确保继承的属性可用"""
@@ -63,7 +45,7 @@ class WitchConfig(BaseGoodConfig):
     
     def validate(self) -> bool:
         """
-        验证配置有效性
+        验证配置有效性（企业级五星标准）
         
         Returns:
             配置是否有效
@@ -77,5 +59,19 @@ class WitchConfig(BaseGoodConfig):
         
         if self.POISON_SCORE_THRESHOLD < 0 or self.POISON_SCORE_THRESHOLD > 100:
             raise ValueError("POISON_SCORE_THRESHOLD must be between 0 and 100")
+        
+        if self.POISON_ENDGAME_THRESHOLD < self.POISON_SCORE_THRESHOLD:
+            raise ValueError("POISON_ENDGAME_THRESHOLD must be >= POISON_SCORE_THRESHOLD")
+        
+        # 验证首夜信任阈值
+        if self.ANTIDOTE_FIRST_NIGHT_MIN_TRUST < 0 or self.ANTIDOTE_FIRST_NIGHT_MIN_TRUST > 50:
+            raise ValueError("ANTIDOTE_FIRST_NIGHT_MIN_TRUST must be between 0 and 50")
+        
+        # 验证首夜信任阈值与TRUST_VERY_LOW的关系
+        if self.ANTIDOTE_FIRST_NIGHT_MIN_TRUST < self.TRUST_VERY_LOW:
+            logger.warning(
+                f"ANTIDOTE_FIRST_NIGHT_MIN_TRUST ({self.ANTIDOTE_FIRST_NIGHT_MIN_TRUST}) "
+                f"< TRUST_VERY_LOW ({self.TRUST_VERY_LOW}), may save self-knife"
+            )
         
         return True

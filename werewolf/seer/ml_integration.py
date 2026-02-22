@@ -104,9 +104,13 @@ class MLAgent:
             session_bonus = min(0.15, training_sessions * 0.015)
             
             quality_bonus = 0.0
-            if 'accuracy' in last_train and last_train['accuracy'] > 0.7:
-                quality_bonus = 0.05
-                logger.debug(f"[ML CONFIDENCE] High accuracy detected: {last_train['accuracy']:.2%}, bonus +5%")
+            # 渐进式质量加成：准确率越高，加成越大
+            if 'accuracy' in last_train:
+                accuracy = last_train['accuracy']
+                if accuracy > 0.7:
+                    # 线性映射：0.7->0, 1.0->0.10
+                    quality_bonus = min(0.10, (accuracy - 0.7) / 0.3 * 0.10)
+                    logger.debug(f"[ML CONFIDENCE] High accuracy detected: {accuracy:.2%}, bonus +{quality_bonus:.2%}")
             
             confidence = 0.40 + sample_bonus + session_bonus + quality_bonus
             confidence = min(0.85, max(0.40, confidence))

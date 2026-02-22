@@ -7,6 +7,7 @@ Hunter (猎人) 配置
 from dataclasses import dataclass
 from typing import Dict, Any
 from werewolf.core.base_good_config import BaseGoodConfig
+from agent_build_sdk.utils.logger import logger
 
 
 @dataclass
@@ -56,7 +57,7 @@ class HunterConfig(BaseGoodConfig):
     
     def validate(self) -> bool:
         """
-        验证配置有效性
+        验证配置有效性（企业级五星版 - 增强验证逻辑）
         
         Returns:
             配置是否有效
@@ -65,49 +66,87 @@ class HunterConfig(BaseGoodConfig):
             ValueError: 配置参数无效时抛出
         """
         # 调用父类验证
-        if not super().validate():
-            return False
+        try:
+            if not super().validate():
+                return False
+        except Exception as e:
+            logger.error(f"Parent config validation failed: {e}")
+            raise ValueError(f"Parent config validation failed: {e}")
         
         # 验证shoot_threshold
+        if not isinstance(self.shoot_threshold, (int, float)):
+            raise ValueError(f"shoot_threshold must be numeric, got {type(self.shoot_threshold)}")
+        
         if not (0 <= self.shoot_threshold <= 1):
-            raise ValueError("shoot_threshold must be between 0 and 1")
+            raise ValueError(f"shoot_threshold must be between 0 and 1, got {self.shoot_threshold}")
         
         # 验证protect_self_priority
+        if not isinstance(self.protect_self_priority, int):
+            raise ValueError(f"protect_self_priority must be int, got {type(self.protect_self_priority)}")
+        
         if not (1 <= self.protect_self_priority <= 10):
-            raise ValueError("protect_self_priority must be between 1 and 10")
+            raise ValueError(f"protect_self_priority must be between 1 and 10, got {self.protect_self_priority}")
         
         # 验证revenge_mode
+        if not isinstance(self.revenge_mode, str):
+            raise ValueError(f"revenge_mode must be str, got {type(self.revenge_mode)}")
+        
         if self.revenge_mode not in ["aggressive", "conservative"]:
-            raise ValueError("revenge_mode must be 'aggressive' or 'conservative'")
+            raise ValueError(f"revenge_mode must be 'aggressive' or 'conservative', got '{self.revenge_mode}'")
         
         # 验证发言长度
+        if not isinstance(self.MIN_SPEECH_LENGTH, int) or not isinstance(self.MAX_SPEECH_LENGTH, int):
+            raise ValueError("Speech length limits must be integers")
+        
         if self.MIN_SPEECH_LENGTH >= self.MAX_SPEECH_LENGTH:
-            raise ValueError("MIN_SPEECH_LENGTH must be less than MAX_SPEECH_LENGTH")
+            raise ValueError(f"MIN_SPEECH_LENGTH ({self.MIN_SPEECH_LENGTH}) must be less than MAX_SPEECH_LENGTH ({self.MAX_SPEECH_LENGTH})")
+        
+        if not isinstance(self.OPTIMAL_SPEECH_LENGTH, int):
+            raise ValueError(f"OPTIMAL_SPEECH_LENGTH must be int, got {type(self.OPTIMAL_SPEECH_LENGTH)}")
         
         if not (self.MIN_SPEECH_LENGTH <= self.OPTIMAL_SPEECH_LENGTH <= self.MAX_SPEECH_LENGTH):
-            raise ValueError("OPTIMAL_SPEECH_LENGTH must be between MIN and MAX")
+            raise ValueError(f"OPTIMAL_SPEECH_LENGTH ({self.OPTIMAL_SPEECH_LENGTH}) must be between MIN ({self.MIN_SPEECH_LENGTH}) and MAX ({self.MAX_SPEECH_LENGTH})")
         
         # 验证阈值
+        if not isinstance(self.early_game_reveal_threshold, int):
+            raise ValueError(f"early_game_reveal_threshold must be int, got {type(self.early_game_reveal_threshold)}")
+        
         if self.early_game_reveal_threshold < 1:
-            raise ValueError("early_game_reveal_threshold must be at least 1")
+            raise ValueError(f"early_game_reveal_threshold must be at least 1, got {self.early_game_reveal_threshold}")
+        
+        if not isinstance(self.late_game_day_threshold, int):
+            raise ValueError(f"late_game_day_threshold must be int, got {type(self.late_game_day_threshold)}")
         
         if self.late_game_day_threshold <= self.early_game_reveal_threshold:
-            raise ValueError("late_game_day_threshold must be greater than early_game_reveal_threshold")
+            raise ValueError(f"late_game_day_threshold ({self.late_game_day_threshold}) must be greater than early_game_reveal_threshold ({self.early_game_reveal_threshold})")
+        
+        if not isinstance(self.critical_alive_threshold, int):
+            raise ValueError(f"critical_alive_threshold must be int, got {type(self.critical_alive_threshold)}")
         
         if self.critical_alive_threshold < 3:
-            raise ValueError("critical_alive_threshold must be at least 3")
+            raise ValueError(f"critical_alive_threshold must be at least 3, got {self.critical_alive_threshold}")
         
         # 验证信任度阈值
+        if not isinstance(self.low_trust_threshold, int) or not isinstance(self.high_trust_threshold, int):
+            raise ValueError("Trust thresholds must be integers")
+        
         if not (0 <= self.low_trust_threshold < self.high_trust_threshold <= 100):
-            raise ValueError("Invalid trust thresholds")
+            raise ValueError(f"Invalid trust thresholds: low={self.low_trust_threshold}, high={self.high_trust_threshold}")
         
         # 验证概率阈值
+        if not isinstance(self.wolf_probability_threshold, (int, float)):
+            raise ValueError(f"wolf_probability_threshold must be numeric, got {type(self.wolf_probability_threshold)}")
+        
         if not (0 <= self.wolf_probability_threshold <= 1):
-            raise ValueError("wolf_probability_threshold must be between 0 and 1")
+            raise ValueError(f"wolf_probability_threshold must be between 0 and 1, got {self.wolf_probability_threshold}")
+        
+        if not isinstance(self.shoot_confidence_threshold, (int, float)):
+            raise ValueError(f"shoot_confidence_threshold must be numeric, got {type(self.shoot_confidence_threshold)}")
         
         if not (0 <= self.shoot_confidence_threshold <= 1):
-            raise ValueError("shoot_confidence_threshold must be between 0 and 1")
+            raise ValueError(f"shoot_confidence_threshold must be between 0 and 1, got {self.shoot_confidence_threshold}")
         
+        logger.debug("✓ HunterConfig validation passed")
         return True
     
     def to_dict(self) -> Dict[str, Any]:

@@ -105,6 +105,22 @@ class HunterAgent(BaseGoodAgent):
         
         logger.info("✓ Hunter-specific memory variables initialized")
     
+    def _safe_load_variable(self, key: str, default=None):
+        """
+        安全地从内存加载变量，如果不存在则返回默认值
+        
+        Args:
+            key: 变量名
+            default: 默认值
+            
+        Returns:
+            变量值或默认值
+        """
+        try:
+            return self.memory.load_variable(key)
+        except (KeyError, AttributeError):
+            return default
+    
     def _init_specific_components(self):
         """
         初始化猎人特有组件
@@ -172,21 +188,27 @@ class HunterAgent(BaseGoodAgent):
         Returns:
             AgentResp: 响应
         """
+        # 输入验证
+        if not req or not hasattr(req, 'status'):
+            logger.error("Invalid request: missing status attribute")
+            return AgentResp(success=False, result="", errMsg="Invalid request")
+        
         # 猎人特有事件：技能使用（开枪）
         if req.status == STATUS_SKILL:
             return self._handle_shoot_skill(req)
         
         # 处理讨论阶段的消息（包含注入检测、虚假引用检测等）
-        if req.status == STATUS_DISCUSS and req.name:
+        if req.status == STATUS_DISCUSS and hasattr(req, 'name') and req.name:
             # 检查是否是遗言阶段（使用统一的遗言检测方法）
             if self._is_last_words_phase(req):
-                my_name = self.memory.load_variable("name")
+                my_name = self._safe_load_variable("name")
                 if req.name == my_name:
                     self.memory.set_variable("giving_last_words", True)
                     logger.info("[LAST WORDS] Hunter is being eliminated, preparing final words")
             
             # 使用基类的消息处理方法（包含注入检测、虚假引用检测、消息解析、发言质量评估）
-            self._process_player_message(req.message, req.name)
+            if hasattr(req, 'message') and req.message:
+                self._process_player_message(req.message, req.name)
         
         # 其他事件使用父类处理（如果父类有perceive方法）
         try:
@@ -197,12 +219,14 @@ class HunterAgent(BaseGoodAgent):
     
     def _is_last_words_phase(self, req: AgentReq) -> bool:
         """
-        统一的遗言阶段检测方法
+        统一的遗言阶段检测方法（企业级五星增强版 - 修复逻辑漏洞）
         
-        遗言阶段的特征：
+        遗言阶段的特征（多重验证）：
         1. 消息中包含 "last words", "final words", "遗言" 等关键词
         2. 消息中包含 "leaves their last words" 等短语
         3. 玩家名称后跟 "Last Words:" 或 "遗言："
+        4. 玩家名称必须匹配（避免误判）
+        5. 排除注入攻击（玩家伪造的遗言消息）
         
         Args:
             req: 游戏事件请求
@@ -210,19 +234,51 @@ class HunterAgent(BaseGoodAgent):
         Returns:
             是否是遗言阶段
         """
-        if not req or not req.message:
+        if not req or not hasattr(req, 'message') or not req.message:
             return False
         
-        message_lower = req.message.lower()
+        message = req.message
+        message_lower = message.lower()
         
         # 关键词检测
         last_words_keywords = [
             "last words", "final words", "遗言",
             "leaves their last words", "leaves his last words", "leaves her last words",
-            "'s last words", "最后的话"
+            "'s last words", "最后的话", "final statement"
         ]
         
-        return any(keyword in message_lower for keyword in last_words_keywords)
+        has_keyword = any(keyword in message_lower for keyword in last_words_keywords)
+        
+        if not has_keyword:
+            return False
+        
+        # 验证玩家名称匹配（避免误判）
+        if hasattr(req, 'name') and req.name:
+            player_name_lower = req.name.lower()
+            if player_name_lower not in message_lower:
+                logger.debug(f"[LAST WORDS] Rejected: Player name {req.name} not in message")
+                return False
+        
+        # 排除注入攻击：检查消息是否以玩家名称开头（如"No.X: ..."）
+        # 真实的遗言消息应该是Host发送的，不会以玩家名称开头
+        if hasattr(req, 'name') and req.name:
+            # 如果消息以"No.X:"开头，这是玩家发言，不是Host的遗言通知
+            if message.strip().startswith(f"{req.name}:"):
+                logger.debug(f"[LAST WORDS] Rejected: Message starts with player name (injection attack)")
+                return False
+        
+        # 额外验证：检查是否包含Host特征词（修复：不应该在没有Host特征时返回True）
+        host_indicators = ["host:", "system:", "game master:", "宣布", "announces", "host"]
+        has_host_indicator = any(indicator in message_lower for indicator in host_indicators)
+        
+        # 修复逻辑漏洞：如果有关键词但没有Host特征，可能是注入攻击，应该返回False
+        if not has_host_indicator:
+            logger.debug(f"[LAST WORDS] Rejected: Last words keyword found but no host indicator (possible injection)")
+            return False
+        
+        # 所有验证通过
+        logger.debug(f"[LAST WORDS] Confirmed: Valid last words phase for {req.name}")
+        return True
     
     def _handle_shoot_skill(self, req: AgentReq) -> AgentResp:
         """
@@ -235,7 +291,7 @@ class HunterAgent(BaseGoodAgent):
             AgentResp: 开枪目标
         """
         # 检查是否可以开枪
-        can_shoot = self.memory.load_variable("can_shoot")
+        can_shoot = self._safe_load_variable("can_shoot", True)
         if not can_shoot:
             logger.info("[HUNTER] Cannot shoot (already used or poisoned)")
             return AgentResp(success=True, result="Do Not Shoot", errMsg=None)
@@ -261,7 +317,7 @@ class HunterAgent(BaseGoodAgent):
         self.memory.set_variable("shoot_target", target)
         
         # 记录开枪历史
-        shoot_history = self.memory.load_variable("shoot_history") or []
+        shoot_history = self._safe_load_variable("shoot_history", [])
         shoot_history.append(target)
         self.memory.set_variable("shoot_history", shoot_history)
         
@@ -270,7 +326,7 @@ class HunterAgent(BaseGoodAgent):
     
     def _make_shoot_decision(self, candidates: List[str]) -> str:
         """
-        开枪决策（与SKILL_PROMPT中的决策树一致）
+        开枪决策（企业级五星版 - 与SKILL_PROMPT中的决策树一致）
         
         决策流程：
         1. 候选人过滤（排除自己、已死亡、高信任度玩家）
@@ -286,39 +342,109 @@ class HunterAgent(BaseGoodAgent):
             开枪目标（或 "Do Not Shoot"）
         """
         if not candidates:
+            logger.warning("[SHOOT DECISION] No candidates provided")
             return "Do Not Shoot"
         
         # 验证决策器存在（必须）
         if not self.shoot_decision_maker:
+            logger.error("[SHOOT DECISION] Shoot decision maker not initialized")
             raise RuntimeError("Shoot decision maker not initialized - cannot make shoot decision")
         
-        my_name = self.memory.load_variable("name") or ""
-        game_state = self.memory.load_variable("game_state") or {}
-        current_day = game_state.get("current_day", 1)
-        alive_players = self.memory.load_variable("alive_players") or []
-        alive_count = len(alive_players)
+        # 获取基本信息（带类型验证）
+        my_name = self._safe_load_variable("name", "")
+        if not my_name:
+            logger.error("[SHOOT DECISION] Player name not set")
+            return "Do Not Shoot"
         
-        # 评估游戏阶段（与提示词一致）
+        # 获取游戏状态（多源验证）
+        game_state = self._safe_load_variable("game_state", {})
+        
+        # 优先使用day_count（更可靠）
+        current_day = self._get_current_day()
+        
+        # 获取存活玩家（带验证）
+        alive_players = self._safe_load_variable("alive_players", [])
+        if not isinstance(alive_players, list):
+            logger.warning(f"[SHOOT DECISION] alive_players is not list: {type(alive_players)}")
+            alive_players = []
+        
+        alive_count = len(alive_players) if alive_players else 12  # 默认12人局
+        
+        # 评估游戏阶段（企业级五星算法 - 多维度判断）
+        game_phase = self._assess_game_phase_for_shoot(current_day, alive_count)
+        
+        # 执行决策（带异常处理）
+        try:
+            target, reason, scores = self.shoot_decision_maker.decide(
+                candidates, 
+                my_name,
+                game_phase,
+                current_day,
+                alive_count
+            )
+            
+            logger.info(f"[SHOOT DECISION] Target: {target}, Reason: {reason}, Phase: {game_phase}")
+            logger.info(f"[SHOOT DECISION] Day: {current_day}, Alive: {alive_count}, Candidates: {len(candidates)}")
+            logger.debug(f"[SHOOT DECISION] All scores: {scores}")
+            
+            return target
+            
+        except Exception as e:
+            logger.error(f"[SHOOT DECISION] Decision failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return "Do Not Shoot"
+    
+    def _assess_game_phase_for_shoot(self, current_day: int, alive_count: int) -> str:
+        """
+        评估游戏阶段（用于开枪决策 - 企业级五星算法）
+        
+        多维度判断：
+        1. 天数维度：Day 1-2 = early, Day 3-5 = mid, Day 6+ = late
+        2. 人数维度：≤6人 = late（危急），7-9人 = mid，10-12人 = early
+        3. 综合判断：取更严重的阶段（如Day 2但只剩6人 → late）
+        
+        Args:
+            current_day: 当前天数
+            alive_count: 存活人数
+            
+        Returns:
+            游戏阶段: "early" | "mid" | "late"
+        """
+        # 天数维度
         if current_day <= 2:
-            game_phase = "early"
-        elif current_day >= 6 or alive_count <= 6:
-            game_phase = "late"
+            day_phase = "early"
+        elif current_day >= 6:
+            day_phase = "late"
         else:
-            game_phase = "mid"
+            day_phase = "mid"
         
-        # 执行决策
-        target, reason, scores = self.shoot_decision_maker.decide(
-            candidates, 
-            my_name,
-            game_phase,
-            current_day,
-            alive_count
-        )
+        # 人数维度
+        if alive_count <= 6:
+            count_phase = "late"
+        elif alive_count <= 9:
+            count_phase = "mid"
+        else:
+            count_phase = "early"
         
-        logger.info(f"[SHOOT DECISION] Target: {target}, Reason: {reason}, Phase: {game_phase}")
-        logger.info(f"[SHOOT DECISION] All scores: {scores}")
+        # 综合判断：取更严重的阶段
+        phase_priority = {"early": 0, "mid": 1, "late": 2}
         
-        return target
+        day_priority = phase_priority[day_phase]
+        count_priority = phase_priority[count_phase]
+        
+        final_priority = max(day_priority, count_priority)
+        
+        for phase, priority in phase_priority.items():
+            if priority == final_priority:
+                logger.debug(
+                    f"[GAME PHASE] Day: {current_day} ({day_phase}), "
+                    f"Alive: {alive_count} ({count_phase}), "
+                    f"Final: {phase}"
+                )
+                return phase
+        
+        return "mid"  # 默认中期
     
     # ==================== 交互方法（使用父类方法）====================
     
@@ -380,14 +506,14 @@ class HunterAgent(BaseGoodAgent):
         # 构建prompt参数
         try:
             # 获取基本信息
-            my_name = self.memory.load_variable("name") or "Unknown"
-            alive_players = self.memory.load_variable("alive_players") or []
+            my_name = self._safe_load_variable("name", "Unknown")
+            alive_players = self._safe_load_variable("alive_players", [])
             current_day = self._get_current_day()
             
             # 获取开枪信息（简化版，不透露过多）
-            can_shoot = self.memory.load_variable("can_shoot")
-            shot_used = self.memory.load_variable("shot_used")
-            shoot_target = self.memory.load_variable("shoot_target")
+            can_shoot = self._safe_load_variable("can_shoot", True)
+            shot_used = self._safe_load_variable("shot_used", False)
+            shoot_target = self._safe_load_variable("shoot_target")
             
             shoot_info = self._format_shoot_info_simple(shot_used, shoot_target, can_shoot)
             
@@ -398,7 +524,7 @@ class HunterAgent(BaseGoodAgent):
             injection_suspects = self._get_injection_suspects()
             
             # 构建历史记录
-            speech_history = self.memory.load_variable("speech_history") or {}
+            speech_history = self._safe_load_variable("speech_history", {})
             history_str = self._format_history(speech_history, max_entries=10)
             
             # 格式化prompt（使用DESC_PROMPT）
@@ -423,24 +549,50 @@ class HunterAgent(BaseGoodAgent):
     
     def _get_current_day(self) -> int:
         """
-        获取当前天数
+        获取当前天数（企业级五星版 - 多源验证）
+        
+        优先级：
+        1. day_count（最可靠，直接记录）
+        2. game_state.current_day（次可靠）
+        3. 历史记录分析（最后手段）
         
         Returns:
-            当前天数（默认为1）
+            当前天数（至少为1）
         """
-        # 优先使用day_count
-        day_count = self.memory.load_variable("day_count")
+        # 优先使用day_count（最可靠）
+        day_count = self._safe_load_variable("day_count")
         if day_count and isinstance(day_count, int) and day_count > 0:
             return day_count
         
         # 回退到game_state
-        game_state = self.memory.load_variable("game_state") or {}
-        current_day = game_state.get("current_day", 1)
+        game_state = self._safe_load_variable("game_state", {})
+        if isinstance(game_state, dict):
+            current_day = game_state.get("current_day")
+            if isinstance(current_day, int) and current_day > 0:
+                return current_day
         
-        # 确保返回有效值
-        if isinstance(current_day, int) and current_day > 0:
-            return current_day
+        # 最后手段：从历史记录分析
+        try:
+            history = self._safe_load_variable("history", [])
+            if isinstance(history, list):
+                import re
+                max_day = 0
+                for msg in history:
+                    if isinstance(msg, str):
+                        # 匹配 "Day X" 或 "第X天"
+                        match = re.search(r'[Dd]ay\s+(\d+)', msg)
+                        if match:
+                            day = int(match.group(1))
+                            max_day = max(max_day, day)
+                
+                if max_day > 0:
+                    logger.debug(f"[CURRENT DAY] Extracted from history: {max_day}")
+                    return max_day
+        except Exception as e:
+            logger.debug(f"[CURRENT DAY] Failed to extract from history: {e}")
         
+        # 默认返回第1天
+        logger.warning("[CURRENT DAY] Unable to determine day, defaulting to 1")
         return 1
     
     def _format_shoot_info_simple(
@@ -479,7 +631,7 @@ class HunterAgent(BaseGoodAgent):
         Returns:
             格式化的嫌疑人字符串
         """
-        player_data = self.memory.load_variable("player_data") or {}
+        player_data = self._safe_load_variable("player_data", {})
         injection_suspects = {}
         
         for player, data in player_data.items():
@@ -491,12 +643,12 @@ class HunterAgent(BaseGoodAgent):
     
     def _determine_game_phase(self, current_day: int, alive_count: int) -> tuple:
         """
-        确定游戏阶段和策略（与提示词中的决策树一致）
+        确定游戏阶段和策略（企业级五星版 - 与提示词中的决策树一致）
         
-        游戏阶段划分：
-        - Early Game: Day 1-3, 10-12人存活 - 保持隐藏
-        - Mid Game: Day 4-6, 7-9人存活 - 考虑暗示
-        - Late Game: Day 7+, ≤6人存活 - 必须暴露
+        游戏阶段划分（多维度判断）：
+        - Early Game: Day 1-3 AND 10-12人存活 - 保持隐藏
+        - Mid Game: Day 4-6 OR 7-9人存活 - 考虑暗示
+        - Late Game: Day 7+ OR ≤6人存活 - 必须暴露
         
         Args:
             current_day: 当前天数
@@ -505,21 +657,30 @@ class HunterAgent(BaseGoodAgent):
         Returns:
             (游戏阶段, 阶段策略)
         """
-        # 晚期游戏：天数>=6 或 存活人数<=6
+        # 验证输入
+        if not isinstance(current_day, int) or current_day < 1:
+            logger.warning(f"[GAME PHASE] Invalid current_day: {current_day}, using 1")
+            current_day = 1
+        
+        if not isinstance(alive_count, int) or alive_count < 1:
+            logger.warning(f"[GAME PHASE] Invalid alive_count: {alive_count}, using 12")
+            alive_count = 12
+        
+        # 晚期游戏：天数>=7 OR 存活人数<=6（任一条件满足即进入晚期）
         if current_day >= self.config.late_game_day_threshold or alive_count <= self.config.critical_alive_threshold:
             return (
                 "Late Game", 
                 "REVEAL identity immediately - establish trust and leadership, warn wolves of retaliation"
             )
         
-        # 早期游戏：天数<=3
-        elif current_day <= self.config.early_game_reveal_threshold:
+        # 早期游戏：天数<=3 AND 存活人数>=10（两个条件都满足才是早期）
+        elif current_day <= self.config.early_game_reveal_threshold and alive_count >= 10:
             return (
                 "Early Game", 
                 "STAY HIDDEN - speak as strong villager, avoid revealing Hunter role, become bait for wolves"
             )
         
-        # 中期游戏：天数4-5
+        # 中期游戏：其他情况
         else:
             return (
                 "Mid Game", 
@@ -542,14 +703,14 @@ class HunterAgent(BaseGoodAgent):
         """
         try:
             # 获取基本信息
-            my_name = self.memory.load_variable("name") or "Unknown"
-            alive_players = self.memory.load_variable("alive_players") or []
+            my_name = self._safe_load_variable("name", "Unknown")
+            alive_players = self._safe_load_variable("alive_players", [])
             
             # 获取开枪历史和状态
-            shoot_history = self.memory.load_variable("shoot_history") or []
-            shot_used = self.memory.load_variable("shot_used")
-            shoot_target = self.memory.load_variable("shoot_target")
-            can_shoot = self.memory.load_variable("can_shoot")
+            shoot_history = self._safe_load_variable("shoot_history", [])
+            shot_used = self._safe_load_variable("shot_used", False)
+            shoot_target = self._safe_load_variable("shoot_target")
+            can_shoot = self._safe_load_variable("can_shoot", True)
             
             # 详细格式化开枪信息（用于遗言）
             shoot_info = self._format_shoot_info_detailed(
@@ -557,12 +718,13 @@ class HunterAgent(BaseGoodAgent):
             )
             
             # 构建历史记录（包含完整的游戏历史）
-            speech_history = self.memory.load_variable("speech_history") or {}
+            speech_history = self._safe_load_variable("speech_history", {})
             history_str = self._format_history(speech_history, max_entries=15)  # 遗言阶段需要更多历史
             
             # 格式化prompt（使用LAST_WORDS_PROMPT）
             prompt = format_prompt(LAST_WORDS_PROMPT, {
                 "history": history_str,
+                "name": my_name,
                 "shoot_info": shoot_info
             })
             
@@ -622,11 +784,11 @@ class HunterAgent(BaseGoodAgent):
             开枪原因（详细说明）
         """
         # 获取目标的信任分数
-        trust_scores = self.memory.load_variable("trust_scores") or {}
+        trust_scores = self._safe_load_variable("trust_scores", {})
         trust_score = trust_scores.get(target, 50)
         
         # 获取注入攻击和虚假引用
-        player_data = self.memory.load_variable("player_data") or {}
+        player_data = self._safe_load_variable("player_data", {})
         target_data = player_data.get(target, {})
         
         reasons = []
@@ -650,7 +812,7 @@ class HunterAgent(BaseGoodAgent):
             reasons.append(f"made {count} false quotation(s)")
         
         # 投票历史（狼人保护行为）
-        voting_history = self.memory.load_variable("voting_history") or {}
+        voting_history = self._safe_load_variable("voting_history", {})
         if target in voting_history:
             votes = voting_history[target]
             if isinstance(votes, list) and len(votes) >= 3:
@@ -674,7 +836,7 @@ class HunterAgent(BaseGoodAgent):
         Returns:
             格式化的信任分数摘要
         """
-        trust_scores = self.memory.load_variable("trust_scores") or {}
+        trust_scores = self._safe_load_variable("trust_scores", {})
         if not trust_scores or not alive_players:
             return "No trust data"
         
@@ -726,7 +888,7 @@ class HunterAgent(BaseGoodAgent):
         Returns:
             AgentResp: 投票目标
         """
-        my_name = self.memory.load_variable("name")
+        my_name = self._safe_load_variable("name")
         
         # 获取候选人列表
         if hasattr(req, 'choices'):
@@ -786,13 +948,13 @@ class HunterAgent(BaseGoodAgent):
         """
         try:
             # 构建上下文
-            my_name = self.memory.load_variable("name") or "Unknown"
-            alive_players = self.memory.load_variable("alive_players") or []
-            can_shoot = self.memory.load_variable("can_shoot")
+            my_name = self._safe_load_variable("name", "Unknown")
+            alive_players = self._safe_load_variable("alive_players", [])
+            can_shoot = self._safe_load_variable("can_shoot", True)
             current_day = self._get_current_day()
             
             # 构建历史记录
-            speech_history = self.memory.load_variable("speech_history") or {}
+            speech_history = self._safe_load_variable("speech_history", {})
             history_str = self._format_history(speech_history, max_entries=10)
             
             # 格式化开枪信息
@@ -841,13 +1003,13 @@ class HunterAgent(BaseGoodAgent):
         """
         try:
             # 构建上下文
-            my_name = self.memory.load_variable("name") or "Unknown"
-            alive_players = self.memory.load_variable("alive_players") or []
-            can_shoot = self.memory.load_variable("can_shoot")
+            my_name = self._safe_load_variable("name", "Unknown")
+            alive_players = self._safe_load_variable("alive_players", [])
+            can_shoot = self._safe_load_variable("can_shoot", True)
             current_day = self._get_current_day()
             
             # 构建历史记录（只包含之前的信息，不包含当晚死亡）
-            speech_history = self.memory.load_variable("speech_history") or {}
+            speech_history = self._safe_load_variable("speech_history", {})
             history_str = self._format_history(speech_history, max_entries=10)
             
             # 格式化开枪信息（用于演讲策略）
@@ -897,7 +1059,7 @@ class HunterAgent(BaseGoodAgent):
             AgentResp: 投票目标
         """
         try:
-            my_name = self.memory.load_variable("name")
+            my_name = self._safe_load_variable("name")
             
             # 获取候选人列表并过滤掉自己
             if req.message:
@@ -910,10 +1072,10 @@ class HunterAgent(BaseGoodAgent):
                 return AgentResp(success=True, result="", errMsg=None)
             
             # 构建上下文
-            alive_players = self.memory.load_variable("alive_players") or []
+            alive_players = self._safe_load_variable("alive_players", [])
             
             # 构建历史记录
-            speech_history = self.memory.load_variable("speech_history") or {}
+            speech_history = self._safe_load_variable("speech_history", {})
             history_str = self._format_history(speech_history, max_entries=10)
             
             # 格式化prompt（使用SHERIFF_VOTE_PROMPT）
@@ -958,13 +1120,13 @@ class HunterAgent(BaseGoodAgent):
         """
         try:
             # 构建上下文
-            my_name = self.memory.load_variable("name") or "Unknown"
-            alive_players = self.memory.load_variable("alive_players") or []
-            can_shoot = self.memory.load_variable("can_shoot")
+            my_name = self._safe_load_variable("name", "Unknown")
+            alive_players = self._safe_load_variable("alive_players", [])
+            can_shoot = self._safe_load_variable("can_shoot", True)
             current_day = self._get_current_day()
             
             # 构建历史记录
-            speech_history = self.memory.load_variable("speech_history") or {}
+            speech_history = self._safe_load_variable("speech_history", {})
             history_str = self._format_history(speech_history, max_entries=10)
             
             # 格式化开枪信息
@@ -1007,11 +1169,11 @@ class HunterAgent(BaseGoodAgent):
         """
         try:
             # 构建上下文
-            my_name = self.memory.load_variable("name") or "Unknown"
-            alive_players = self.memory.load_variable("alive_players") or []
+            my_name = self._safe_load_variable("name", "Unknown")
+            alive_players = self._safe_load_variable("alive_players", [])
             
             # 构建历史记录
-            speech_history = self.memory.load_variable("speech_history") or {}
+            speech_history = self._safe_load_variable("speech_history", {})
             history_str = self._format_history(speech_history, max_entries=10)
             
             # 格式化prompt（使用SHERIFF_SPEECH_ORDER_PROMPT）
@@ -1058,7 +1220,7 @@ class HunterAgent(BaseGoodAgent):
             AgentResp: 转移目标（或 "tear" 销毁警徽）
         """
         try:
-            my_name = self.memory.load_variable("name")
+            my_name = self._safe_load_variable("name")
             
             # 获取候选人列表并过滤掉自己
             if req.message:
@@ -1071,11 +1233,11 @@ class HunterAgent(BaseGoodAgent):
                 return AgentResp(success=True, result="tear", errMsg=None)
             
             # 构建上下文
-            alive_players = self.memory.load_variable("alive_players") or []
-            can_shoot = self.memory.load_variable("can_shoot")
+            alive_players = self._safe_load_variable("alive_players", [])
+            can_shoot = self._safe_load_variable("can_shoot", True)
             
             # 构建历史记录
-            speech_history = self.memory.load_variable("speech_history") or {}
+            speech_history = self._safe_load_variable("speech_history", {})
             history_str = self._format_history(speech_history, max_entries=10)
             
             # 格式化开枪信息

@@ -230,7 +230,6 @@ class InjectionDetector(LLMDetectorBase):
                 logger.warning(f"LLM返回格式错误，使用备用检测: {result_text[:100]}")
                 self.stats['llm_failures'] += 1
                 return self._detect_with_rules(message)
-                return self._detect_with_rules(message)
                 
         except json.JSONDecodeError as e:
             logger.error(f"JSON解析失败: {e}，使用备用检测")

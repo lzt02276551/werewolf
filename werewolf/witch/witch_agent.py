@@ -142,22 +142,42 @@ class WitchAgent(BaseGoodAgent):
     
     def _handle_skill(self, req: AgentReq) -> AgentResp:
         """
-        处理技能使用（解药/毒药决策）
+        处理技能使用（解药/毒药决策）- 兼容游戏引擎格式
         
         Args:
             req: 技能请求
             
         Returns:
-            AgentResp: 技能使用响应
+            AgentResp: 技能使用响应（格式：Save/Poison/Do Not Use）
         """
         action, target = self._make_skill_decision(req)
         
-        logger.info(f"[WITCH SKILL] Action: {action}, Target: {target}")
-        return AgentResp(success=True, result=f"{action}:{target}", errMsg=None)
+        # 转换为游戏引擎期望的格式（兼容模板）
+        if action == "antidote" and target:
+            result = f"Save {target}"
+            skill_target = target
+        elif action == "poison" and target:
+            result = f"Poison {target}"
+            skill_target = target
+        else:
+            result = "Do Not Use"
+            skill_target = None
+        
+        logger.info(f"[WITCH SKILL] Result: {result}, SkillTarget: {skill_target}")
+        return AgentResp(success=True, result=result, skillTargetPlayer=skill_target, errMsg=None)
     
     def _make_skill_decision(self, req: AgentReq) -> Tuple[str, str]:
         """
-        技能决策（解药/毒药）
+        技能决策（解药/毒药）- 简化版（符合女巫规则）
+        
+        女巫规则：
+        - 解药只能用一次，可以救任何被狼人杀死的玩家（包括自己）
+        - 毒药只能用一次，可以毒死任何玩家
+        - 同一晚可以同时使用解药和毒药
+        
+        决策策略：
+        1. 解药：优先救高价值目标（预言家>守卫>强力玩家），避免救自刀
+        2. 毒药：毒确认狼人或高度可疑玩家
         
         Args:
             req: 请求对象
@@ -171,37 +191,42 @@ class WitchAgent(BaseGoodAgent):
             # 增加夜晚计数
             self.memory_dao.increment_night()
             current_night = self.memory_dao.get_current_night()
+            logger.info(f"[SKILL] Night {current_night} begins")
             
-            # 从请求中提取被杀玩家
+            # 提取被杀玩家
             victim = self._extract_killed_player(req)
             
-            # 检查是否是自己被杀
-            my_name = self.memory_dao.get_my_name()
-            if victim == my_name:
-                logger.info(f"[SKILL] Night {current_night}: Witch was killed, checking self-save strategy")
-                # 根据配置决定是否自救
-                if self._should_self_save(current_night):
-                    if self.memory_dao.get_has_antidote():
-                        self.memory_dao.set_has_antidote(False)
-                        self.memory_dao.add_saved_player(victim)
-                        logger.info(f"[SKILL] Night {current_night}: SELF-SAVE")
-                        return "antidote", victim
+            if not victim:
+                logger.warning(f"[SKILL] Night {current_night}: No victim identified")
+                # 没有被杀玩家，只考虑毒药
+                poison_action = self._decide_poison_action(req, current_night)
+                if poison_action:
+                    return poison_action
+                return "none", ""
             
-            # 解药决策（救其他人）
+            logger.info(f"[SKILL] Night {current_night}: Victim identified: {victim}")
+            
+            # 解药决策（包括自救）
             antidote_action = self._decide_antidote_action(victim, current_night)
             if antidote_action:
                 return antidote_action
             
-            # 毒药决策
+            # 如果不救人，考虑毒药
             poison_action = self._decide_poison_action(req, current_night)
             if poison_action:
                 return poison_action
             
-            logger.info(f"[SKILL] Night {current_night}: No action")
+            logger.info(f"[SKILL] Night {current_night}: No action taken")
             return "none", ""
             
+        except AttributeError as e:
+            logger.error(f"[SKILL] Attribute error: {e}")
+            return "none", ""
+        except ValueError as e:
+            logger.error(f"[SKILL] Value error: {e}")
+            return "none", ""
         except Exception as e:
-            logger.error(f"Error in skill decision: {e}")
+            logger.error(f"[SKILL] Unexpected error: {e}", exc_info=True)
             return "none", ""
     
     def _decide_antidote_action(
@@ -210,7 +235,7 @@ class WitchAgent(BaseGoodAgent):
         current_night: int
     ) -> Optional[Tuple[str, str]]:
         """
-        决定解药行动
+        决定解药行动（企业级五星标准）
         
         Args:
             victim: 被杀玩家
@@ -228,8 +253,15 @@ class WitchAgent(BaseGoodAgent):
         )
         
         if should_save:
+            # 更新药品状态
             self.memory_dao.set_has_antidote(False)
             self.memory_dao.add_saved_player(victim)
+            
+            # 添加到历史记录（重要：用于后续分析）
+            # 注意：这里添加到内存历史，不是通过append_history（避免重复）
+            saved_players = self.memory_dao.get_saved_players()
+            logger.info(f"[ANTIDOTE] Saved players updated: {saved_players}")
+            
             logger.info(
                 f"[SKILL] Night {current_night}: SAVE {victim} "
                 f"({reason}, score: {score:.1f})"
@@ -244,7 +276,7 @@ class WitchAgent(BaseGoodAgent):
         current_night: int
     ) -> Optional[Tuple[str, str]]:
         """
-        决定毒药行动
+        决定毒药行动（企业级五星标准）
         
         Args:
             req: 请求对象
@@ -263,8 +295,15 @@ class WitchAgent(BaseGoodAgent):
         )
         
         if target:
+            # 更新药品状态
             self.memory_dao.set_has_poison(False)
             self.memory_dao.add_poisoned_player(target)
+            
+            # 添加到历史记录（重要：用于后续分析）
+            # 注意：这里添加到内存历史，不是通过append_history（避免重复）
+            poisoned_players = self.memory_dao.get_poisoned_players()
+            logger.info(f"[POISON] Poisoned players updated: {poisoned_players}")
+            
             logger.info(
                 f"[SKILL] Night {current_night}: POISON {target} "
                 f"({reason}, score: {score:.1f})"
@@ -275,7 +314,12 @@ class WitchAgent(BaseGoodAgent):
     
     def _extract_killed_player(self, req: AgentReq) -> Optional[str]:
         """
-        从请求中提取被杀玩家
+        从请求中提取被杀玩家（企业级五星标准）
+        
+        优先级：
+        1. req.message（主要来源）
+        2. 历史记录最近10条
+        3. 返回None（安全降级）
         
         Args:
             req: 请求对象
@@ -284,59 +328,64 @@ class WitchAgent(BaseGoodAgent):
             被杀玩家名称，未找到返回None
         """
         try:
-            # 优先从message中提取
-            if req.message:
+            # 优先从message中提取（最可靠）
+            if hasattr(req, 'message') and req.message:
                 msg = str(req.message)
-                if "was killed" in msg or "died" in msg or "被杀" in msg:
-                    match = re.search(r'No\.(\d+)', msg)
-                    if match:
-                        victim = f"No.{match.group(1)}"
-                        logger.info(f"[EXTRACT] Found victim from message: {victim}")
-                        return victim
-            
-            # 从历史中提取
-            if req.history:
-                for msg in reversed(req.history[-10:]):
-                    if "was killed" in msg or "died" in msg or "被杀" in msg:
-                        match = re.search(r'No\.(\d+)', msg)
+                # 多语言支持：英文和中文
+                kill_indicators = ["was killed", "died", "被杀", "death", "killed by"]
+                
+                if any(indicator in msg.lower() for indicator in kill_indicators):
+                    # 提取玩家编号（支持多种格式）
+                    patterns = [
+                        r'No\.(\d+)',           # No.1
+                        r'Player\s*(\d+)',      # Player 1
+                        r'玩家\s*(\d+)',        # 玩家1
+                        r'#(\d+)',              # #1
+                    ]
+                    
+                    for pattern in patterns:
+                        match = re.search(pattern, msg, re.IGNORECASE)
                         if match:
                             victim = f"No.{match.group(1)}"
-                            logger.info(f"[EXTRACT] Found victim from history: {victim}")
+                            logger.info(f"[EXTRACT] Found victim from message: {victim}")
                             return victim
+            
+            # 从历史中提取（备用方案）
+            if hasattr(req, 'history') and req.history:
+                for msg in reversed(req.history[-10:]):  # 最近10条
+                    if not isinstance(msg, str):
+                        continue
+                    
+                    kill_indicators = ["was killed", "died", "被杀", "death", "killed by"]
+                    if any(indicator in msg.lower() for indicator in kill_indicators):
+                        patterns = [
+                            r'No\.(\d+)',
+                            r'Player\s*(\d+)',
+                            r'玩家\s*(\d+)',
+                            r'#(\d+)',
+                        ]
+                        
+                        for pattern in patterns:
+                            match = re.search(pattern, msg, re.IGNORECASE)
+                            if match:
+                                victim = f"No.{match.group(1)}"
+                                logger.info(f"[EXTRACT] Found victim from history: {victim}")
+                                return victim
             
             logger.warning("[EXTRACT] No victim found in message or history")
             return None
             
+        except AttributeError as e:
+            logger.error(f"[EXTRACT] Attribute error (req missing fields): {e}")
+            return None
+        except re.error as e:
+            logger.error(f"[EXTRACT] Regex error: {e}")
+            return None
         except Exception as e:
-            logger.error(f"Error extracting killed player: {e}")
+            logger.error(f"[EXTRACT] Unexpected error: {e}", exc_info=True)
             return None
     
-    def _should_self_save(self, current_night: int) -> bool:
-        """
-        决定是否自救
-        
-        Args:
-            current_night: 当前夜晚数
-            
-        Returns:
-            是否应该自救
-        """
-        # 第一夜通常自救
-        if current_night == 1:
-            return True
-        
-        # 后期根据局势判断
-        # 可以添加更复杂的逻辑，例如：
-        # - 如果好人阵营处于劣势，优先自救
-        # - 如果已经确定多个狼人，可以不自救
-        wolves_eliminated = self.memory_dao.get_wolves_eliminated()
-        good_players_lost = self.memory_dao.get_good_players_lost()
-        
-        # 简单策略：如果好人损失较多，自救
-        if good_players_lost > wolves_eliminated + 1:
-            return True
-        
-        return False
+    # 移除 _should_self_save 方法，自救逻辑整合到解药决策中
     
     # ==================== 上下文构建 ====================
     
@@ -435,7 +484,12 @@ class WitchAgent(BaseGoodAgent):
     
     def _handle_sheriff_speech(self, req: AgentReq) -> AgentResp:
         """
-        处理警长竞选演讲
+        处理警长竞选演讲（企业级五星标准）
+        
+        ⚠️ 关键约束：警长选举发生在死亡公告之前！
+        - 不能提及昨晚谁死了（主持人还未公布）
+        - 不能引用夜晚击杀结果（主持人还未揭晓）
+        - 只能基于：药品状态、角色、前一天的公开信息
         
         Args:
             req: 演讲请求
@@ -448,8 +502,22 @@ class WitchAgent(BaseGoodAgent):
         history = self.memory.load_history()
         skill_info = self._format_skill_info()
         
+        # 过滤历史记录：移除当前夜晚的死亡信息（如果有）
+        # 警长选举时，昨晚的死亡信息还未公布
+        filtered_history = []
+        current_night = self.memory_dao.get_current_night()
+        
+        for msg in history[-30:]:
+            # 跳过包含"killed"、"died"等关键词的最新消息
+            if current_night > 0 and any(kw in msg.lower() for kw in ["killed", "died", "death"]):
+                # 检查是否是最新的夜晚信息
+                if f"Night {current_night}" in msg or "last night" in msg.lower():
+                    logger.debug(f"[SHERIFF SPEECH] Filtering night info: {msg[:50]}...")
+                    continue
+            filtered_history.append(msg)
+        
         prompt = format_prompt(SHERIFF_SPEECH_PROMPT, {
-            "history": "\n".join(history[-30:]),
+            "history": "\n".join(filtered_history),
             "name": self.memory_dao.get_my_name(),
             "skill_info": skill_info
         })

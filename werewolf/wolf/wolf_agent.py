@@ -109,6 +109,16 @@ class WolfAgent(BaseWolfAgent):
                 self.memory.clear()
                 self.memory.set_variable("name", req.name)
                 self.memory.set_variable("teammates", [])
+                
+                # 初始化所有必要的内存变量（确保后续访问不会KeyError）
+                self.memory.set_variable("threat_levels", {})
+                self.memory.set_variable("breakthrough_values", {})
+                self.memory.set_variable("identified_roles", {})
+                self.memory.set_variable("teammate_intelligence", {})
+                self.memory.set_variable("speech_quality", {})
+                self.memory.set_variable("injection_attempts", {})
+                self.memory.set_variable("voting_history", {})
+                
                 self.memory.append_history(f"主持人: 你好，你的角色是【狼人】，你是 {req.name}")
                 
                 if req.message:
@@ -242,9 +252,11 @@ class WolfAgent(BaseWolfAgent):
                 try:
                     prompt = format_prompt(
                         DESC_PROMPT,
-                        history="\n".join(self.memory.load_history()),
-                        name=my_name,
-                        teammates=", ".join(teammates)
+                        {
+                            "history": "\n".join(self.memory.load_history()),
+                            "name": my_name,
+                            "teammates": ", ".join(teammates)
+                        }
                     )
                     
                     result = self._llm_generate(prompt)
@@ -268,20 +280,20 @@ class WolfAgent(BaseWolfAgent):
                 
                 my_name = self.memory.load_variable("name") or ""
                 
-                # 从req.message中解析候选人
+                # 从req.message中解析候选人（模板兼容）
+                # 注意：不排除队友！需要根据情况决定是否投队友（卖队友策略）
                 if req.message:
-                    choices = [name for name in req.message.split(",")
-                              if name != my_name and name not in teammates]
+                    all_choices = [name for name in req.message.split(",") if name != my_name]
                 else:
-                    choices = req.choices or []
+                    all_choices = []
                 
-                if not choices:
+                if not all_choices:
                     logger.warning("[VOTE] No valid choices")
                     return AgentResp(success=True, result="No.1", errMsg=None)
                 
-                # 使用提示词进行投票决策
-                target = self._make_vote_with_prompt(choices, teammates, my_name)
-                target = self._validate_player_name(target, choices)
+                # 使用提示词进行投票决策（包含卖队友策略）
+                target = self._make_vote_with_prompt(all_choices, teammates, my_name)
+                target = self._validate_player_name(target, all_choices)
                 
                 logger.info(f"[VOTE] Voting for: {target}")
                 return AgentResp(success=True, result=target, errMsg=None)
@@ -298,9 +310,11 @@ class WolfAgent(BaseWolfAgent):
                 try:
                     prompt = format_prompt(
                         WOLF_SPEECH_PROMPT,
-                        history="\n".join(self.memory.load_history()),
-                        name=my_name,
-                        teammates=", ".join(teammates)
+                        {
+                            "history": "\n".join(self.memory.load_history()),
+                            "name": my_name,
+                            "teammates": ", ".join(teammates)
+                        }
                     )
                     
                     result = self._llm_generate(prompt)
@@ -322,12 +336,12 @@ class WolfAgent(BaseWolfAgent):
                 
                 my_name = self.memory.load_variable("name") or ""
                 
-                # 从req.message中解析候选人
+                # 从req.message中解析候选人（模板兼容）
                 if req.message:
                     choices = [name for name in req.message.split(",")
                               if name != my_name and name not in teammates]
                 else:
-                    choices = req.choices or []
+                    choices = []
                 
                 if not choices:
                     logger.warning("[KILL] No valid choices")
@@ -353,9 +367,11 @@ class WolfAgent(BaseWolfAgent):
                     # 使用提示词进行警长竞选决策
                     prompt = format_prompt(
                         SHERIFF_ELECTION_PROMPT,
-                        history="\n".join(self.memory.load_history()),
-                        name=my_name,
-                        teammates=", ".join(teammates)
+                        {
+                            "history": "\n".join(self.memory.load_history()),
+                            "name": my_name,
+                            "teammates": ", ".join(teammates)
+                        }
                     )
                     
                     result = self._llm_generate(prompt)
@@ -384,9 +400,11 @@ class WolfAgent(BaseWolfAgent):
                 try:
                     prompt = format_prompt(
                         SHERIFF_SPEECH_PROMPT,
-                        history="\n".join(self.memory.load_history()),
-                        name=my_name,
-                        teammates=", ".join(teammates)
+                        {
+                            "history": "\n".join(self.memory.load_history()),
+                            "name": my_name,
+                            "teammates": ", ".join(teammates)
+                        }
                     )
                     
                     result = self._llm_generate(prompt)
@@ -411,9 +429,11 @@ class WolfAgent(BaseWolfAgent):
                 try:
                     prompt = format_prompt(
                         SHERIFF_PK_PROMPT,
-                        history="\n".join(self.memory.load_history()),
-                        name=my_name,
-                        teammates=", ".join(teammates)
+                        {
+                            "history": "\n".join(self.memory.load_history()),
+                            "name": my_name,
+                            "teammates": ", ".join(teammates)
+                        }
                     )
                     
                     result = self._llm_generate(prompt)
@@ -449,10 +469,12 @@ class WolfAgent(BaseWolfAgent):
                     # 使用提示词进行警长投票决策
                     prompt = format_prompt(
                         SHERIFF_VOTE_PROMPT,
-                        history="\n".join(self.memory.load_history()),
-                        name=my_name,
-                        teammates=", ".join(teammates),
-                        choices=", ".join(choices)
+                        {
+                            "history": "\n".join(self.memory.load_history()),
+                            "name": my_name,
+                            "teammates": ", ".join(teammates),
+                            "choices": ", ".join(choices)
+                        }
                     )
                     
                     result = self._llm_generate(prompt)
@@ -482,9 +504,11 @@ class WolfAgent(BaseWolfAgent):
                     # 使用提示词进行发言顺序决策
                     prompt = format_prompt(
                         SHERIFF_SPEECH_ORDER_PROMPT,
-                        history="\n".join(self.memory.load_history()),
-                        name=my_name,
-                        teammates=", ".join(teammates)
+                        {
+                            "history": "\n".join(self.memory.load_history()),
+                            "name": my_name,
+                            "teammates": ", ".join(teammates)
+                        }
                     )
                     
                     result = self._llm_generate(prompt)
@@ -525,10 +549,12 @@ class WolfAgent(BaseWolfAgent):
                     # 使用提示词进行警徽转移决策
                     prompt = format_prompt(
                         SHERIFF_TRANSFER_PROMPT,
-                        history="\n".join(self.memory.load_history()),
-                        name=my_name,
-                        teammates=", ".join(teammates),
-                        choices=", ".join(choices)
+                        {
+                            "history": "\n".join(self.memory.load_history()),
+                            "name": my_name,
+                            "teammates": ", ".join(teammates),
+                            "choices": ", ".join(choices)
+                        }
                     )
                     
                     result = self._llm_generate(prompt)
@@ -594,11 +620,13 @@ class WolfAgent(BaseWolfAgent):
             
             prompt = format_prompt(
                 KILL_PROMPT,
-                history="\n".join(self.memory.load_history()),
-                name=my_name,
-                teammates=", ".join(teammates),
-                choices=", ".join(choices),
-                ranked_candidates=ranked_candidates
+                {
+                    "history": "\n".join(self.memory.load_history()),
+                    "name": my_name,
+                    "teammates": ", ".join(teammates),
+                    "choices": ", ".join(choices),
+                    "ranked_candidates": ranked_candidates
+                }
             )
             
             result = self._llm_generate(prompt)
@@ -612,8 +640,13 @@ class WolfAgent(BaseWolfAgent):
         """
         使用提示词进行投票决策（带后备方案）
         
+        包含智能卖队友策略：
+        1. 评估每个队友是否应该被卖
+        2. 如果队友已暴露或智商极低，考虑投票
+        3. 否则投非队友
+        
         Args:
-            choices: 候选人列表
+            choices: 候选人列表（包含队友）
             teammates: 队友列表
             my_name: 自己的名称
             
@@ -624,30 +657,47 @@ class WolfAgent(BaseWolfAgent):
             # 获取威胁等级和可突破值信息
             threat_levels = self.memory.load_variable("threat_levels") or {}
             breakthrough_values = self.memory.load_variable("breakthrough_values") or {}
+            teammate_intelligence = self.memory.load_variable("teammate_intelligence") or {}
+            identified_roles = self.memory.load_variable("identified_roles") or {}
             
-            # 构建候选人排名信息
+            # 构建候选人排名信息（包含卖队友评估）
             ranked_info = []
             for candidate in choices:
                 threat = threat_levels.get(candidate, 50)
                 breakthrough = breakthrough_values.get(candidate, 50)
-                is_teammate = "TEAMMATE" if candidate in teammates else "NON-TEAMMATE"
-                ranked_info.append(f"{candidate}: Threat={threat}, Breakthrough={breakthrough}, Status={is_teammate}")
+                
+                if candidate in teammates:
+                    # 队友 - 评估是否应该卖
+                    iq = teammate_intelligence.get(candidate, 50)
+                    is_exposed = identified_roles.get(candidate) == "wolf"
+                    should_betray, reason = self._should_betray_teammate(candidate)
+                    
+                    status = f"TEAMMATE (IQ={iq}, Exposed={is_exposed}, ShouldBetray={should_betray})"
+                    if should_betray:
+                        status += f" - REASON: {reason}"
+                else:
+                    # 非队友
+                    status = "NON-TEAMMATE"
+                
+                ranked_info.append(f"{candidate}: Threat={threat}, Breakthrough={breakthrough}, Status={status}")
             
             ranked_candidates = "\n".join(ranked_info) if ranked_info else "No analysis available"
             
             prompt = format_prompt(
                 VOTE_PROMPT,
-                history="\n".join(self.memory.load_history()),
-                name=my_name,
-                teammates=", ".join(teammates),
-                choices=", ".join(choices),
-                ranked_candidates=ranked_candidates
+                {
+                    "history": "\n".join(self.memory.load_history()),
+                    "name": my_name,
+                    "teammates": ", ".join(teammates),
+                    "choices": ", ".join(choices),
+                    "ranked_candidates": ranked_candidates
+                }
             )
             
             result = self._llm_generate(prompt)
             return result.strip()
         except Exception as e:
             logger.warning(f"[VOTE] LLM决策失败，使用后备方案: {e}")
-            # 使用基类的决策方法作为后备
+            # 使用基类的决策方法作为后备（包含卖队友逻辑）
             return self._make_vote_decision(choices)
 

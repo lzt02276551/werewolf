@@ -62,7 +62,7 @@ class Config:
     @staticmethod
     def _normalize_weights(rf: float, gb: float, xgb: float) -> tuple:
         """
-        归一化权重,确保总和为1
+        归一化权重,确保总和为1（增强边界情况处理）
         
         Args:
             rf: RandomForest权重
@@ -73,6 +73,11 @@ class Config:
             (rf, gb, xgb) 归一化后的权重元组
         """
         from werewolf.optimization.utils.safe_math import safe_divide
+        
+        # 确保所有权重非负
+        rf = max(0.0, rf)
+        gb = max(0.0, gb)
+        xgb = max(0.0, xgb)
         
         total = rf + gb + xgb
         
@@ -88,11 +93,18 @@ class Config:
         gb_norm = safe_divide(gb, total, default=0.4)
         xgb_norm = safe_divide(xgb, total, default=0.2)
         
-        # 验证归一化结果
+        # 验证归一化结果（使用更严格的检查）
         final_sum = rf_norm + gb_norm + xgb_norm
         if abs(final_sum - 1.0) > Config.WEIGHT_TOLERANCE:
             print(
                 f"Error: Normalization failed: sum={final_sum:.6f}, using defaults"
+            )
+            return (0.4, 0.4, 0.2)
+        
+        # 二次验证：确保没有NaN或Inf
+        if not all(isinstance(w, (int, float)) and -1e10 < w < 1e10 for w in [rf_norm, gb_norm, xgb_norm]):
+            print(
+                f"Error: Invalid normalized weights detected, using defaults"
             )
             return (0.4, 0.4, 0.2)
         

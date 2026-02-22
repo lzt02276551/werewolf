@@ -6,6 +6,7 @@ Witch基础组件
 """
 
 from typing import Any, Dict, List, Optional
+from agent_build_sdk.utils.logger import logger
 from werewolf.core.base_components import BaseMemoryDAO
 from werewolf.common.utils import DataValidator as CommonDataValidator
 
@@ -265,7 +266,7 @@ class WitchMemoryDAO(BaseMemoryDAO):
 
 class DataValidator(CommonDataValidator):
     """
-    数据验证器（继承通用验证器）
+    数据验证器（继承通用验证器）- 企业级五星标准
     
     提供女巫角色特定的数据验证方法
     """
@@ -273,7 +274,7 @@ class DataValidator(CommonDataValidator):
     @staticmethod
     def validate_potion_status(has_antidote: Any, has_poison: Any) -> bool:
         """
-        验证药品状态
+        验证药品状态（企业级五星标准）
         
         Args:
             has_antidote: 解药状态
@@ -283,13 +284,14 @@ class DataValidator(CommonDataValidator):
             是否有效
         """
         if not isinstance(has_antidote, bool) or not isinstance(has_poison, bool):
+            logger.error(f"Invalid potion status types: antidote={type(has_antidote)}, poison={type(has_poison)}")
             return False
         return True
     
     @staticmethod
     def validate_saved_players(saved_players: Any) -> bool:
         """
-        验证已救玩家列表
+        验证已救玩家列表（企业级五星标准）
         
         Args:
             saved_players: 已救玩家列表
@@ -298,5 +300,60 @@ class DataValidator(CommonDataValidator):
             是否有效
         """
         if not isinstance(saved_players, list):
+            logger.error(f"Invalid saved_players type: {type(saved_players)}")
             return False
-        return all(DataValidator.validate_player_name(p) for p in saved_players)
+        
+        # 验证每个玩家名称
+        for player in saved_players:
+            if not DataValidator.validate_player_name(player):
+                logger.error(f"Invalid player name in saved_players: {player}")
+                return False
+        
+        return True
+    
+    @staticmethod
+    def validate_poisoned_players(poisoned_players: Any) -> bool:
+        """
+        验证已毒玩家列表（企业级五星标准）
+        
+        Args:
+            poisoned_players: 已毒玩家列表
+            
+        Returns:
+            是否有效
+        """
+        if not isinstance(poisoned_players, list):
+            logger.error(f"Invalid poisoned_players type: {type(poisoned_players)}")
+            return False
+        
+        # 验证每个玩家名称
+        for player in poisoned_players:
+            if not DataValidator.validate_player_name(player):
+                logger.error(f"Invalid player name in poisoned_players: {player}")
+                return False
+        
+        return True
+    
+    @staticmethod
+    def validate_night_number(night: Any) -> bool:
+        """
+        验证夜晚数（企业级五星标准）
+        
+        Args:
+            night: 夜晚数
+            
+        Returns:
+            是否有效
+        """
+        if not isinstance(night, int):
+            logger.error(f"Invalid night type: {type(night)}")
+            return False
+        
+        if night < 0:
+            logger.error(f"Invalid night number: {night} (must be >= 0)")
+            return False
+        
+        if night > 20:  # 合理上限（12人局不太可能超过20夜）
+            logger.warning(f"Unusually high night number: {night}")
+        
+        return True

@@ -83,8 +83,18 @@ class BaseGoodAgent(BasicRoleAgent):
         """
         super().__init__(role, model_name=model_name)
         
-        # 配置（子类可以覆盖为角色特有配置）
-        self.config = BaseGoodConfig()
+        # 配置（子类可以在__init__中覆盖为角色特有配置）
+        if not hasattr(self, 'config') or not isinstance(self.config, BaseGoodConfig):
+            self.config = BaseGoodConfig()
+        
+        # 设置主LLM客户端的超时（90秒）
+        if hasattr(self, 'client') and self.client is not None:
+            try:
+                # OpenAI客户端支持设置timeout属性
+                self.client.timeout = 90.0
+                logger.info("✓ 主LLM客户端超时设置为90秒")
+            except Exception as e:
+                logger.warning(f"⚠ 无法设置主客户端超时: {e}")
         
         # 初始化内存变量（子类可以覆盖扩展）
         self._init_memory_variables()
@@ -128,6 +138,9 @@ class BaseGoodAgent(BasicRoleAgent):
         self.memory.set_variable("game_result", "")  # 初始化为空字符串而非None
         self.memory.set_variable("giving_last_words", False)
         self.memory.set_variable("sheriff", None)
+        # 添加检测相关的内存变量
+        self.memory.set_variable("injection_attempts", [])
+        self.memory.set_variable("false_quotations", [])
     
     def _init_detection_client(self) -> Tuple[Optional[Any], str]:
         """
@@ -156,8 +169,8 @@ class BaseGoodAgent(BasicRoleAgent):
                 logger.info("ℹ️ 检测模型API未配置，将使用主模型（单模型模式）")
                 return (getattr(self, 'client', None), self.model_name)
             
-            # 创建检测专用客户端
-            detection_client = OpenAI(api_key=api_key, base_url=base_url)
+            # 创建检测专用客户端（设置90秒超时）
+            detection_client = OpenAI(api_key=api_key, base_url=base_url, timeout=90.0)
             
             logger.info("✓ 双模型架构已初始化")
             logger.info(f"  - 生成模型: {self.model_name} (用于发言生成)")
@@ -653,7 +666,13 @@ class BaseGoodAgent(BasicRoleAgent):
     
     def _truncate_output(self, text: str, max_length: int = None) -> str:
         """
-        截断输出文本
+        智能截断输出文本（企业级五星标准）
+        
+        优先保留重要信息：
+        1. 角色特定信息（检查结果、药水使用等）
+        2. 关键指控和分析
+        3. 逻辑推理
+        4. 策略建议
         
         Args:
             text: 原始文本
@@ -668,7 +687,42 @@ class BaseGoodAgent(BasicRoleAgent):
         if len(text) <= max_length:
             return text
         
-        # 截断到最大长度
+        # 识别重要部分的标记（通用）
+        important_markers = [
+            'Night',      # 夜晚信息
+            'checked',    # 检查结果
+            'WOLF',       # 狼人指控
+            'GOOD',       # 好人验证
+            'poisoned',   # 女巫用药
+            'saved',      # 女巫救人
+            'protected',  # 守卫保护
+            'shot',       # 猎人开枪
+        ]
+        
+        # 尝试保留包含重要标记的部分
+        for marker in important_markers:
+            marker_pos = text.find(marker)
+            if marker_pos >= 0 and marker_pos < max_length * 0.3:
+                # 重要信息在前30%，优先保留
+                # 从重要信息开始，截断到最大长度
+                if marker_pos + max_length <= len(text):
+                    truncated = text[marker_pos:marker_pos + max_length]
+                else:
+                    truncated = text[marker_pos:]
+                
+                # 在句子边界截断
+                last_period = max(
+                    truncated.rfind('.'),
+                    truncated.rfind('!'),
+                    truncated.rfind('?'),
+                    truncated.rfind('。')
+                )
+                
+                if last_period > len(truncated) * 0.8:
+                    prefix = text[:marker_pos] if marker_pos > 0 else ""
+                    return prefix + truncated[:last_period + 1]
+        
+        # 标准截断逻辑
         truncated = text[:max_length]
         
         # 尝试在句子结束处截断
@@ -682,7 +736,8 @@ class BaseGoodAgent(BasicRoleAgent):
         if last_period > self.config.MIN_SPEECH_LENGTH:
             return truncated[:last_period + 1]
         else:
-            return truncated
+            # 添加截断标记
+            return truncated.rstrip() + "..."
     
     def _validate_player_name(self, output: str, valid_choices: List[str]) -> str:
         """
@@ -889,13 +944,8 @@ class BaseGoodAgent(BasicRoleAgent):
                 continue
             
             try:
-                # 提取标准化特征
-                features = StandardFeatureExtractor.extract_player_features(
-                    player_name, data, context
-                )
-                
-                # 转换为ML格式
-                ml_features = StandardFeatureExtractor.features_to_ml_format(features)
+                # 提取标准化特征（直接返回numpy数组）
+                features = StandardFeatureExtractor.extract_features(data)
                 
                 # 推断角色
                 role = self._infer_player_role(player_name, result_message, context)
@@ -903,8 +953,8 @@ class BaseGoodAgent(BasicRoleAgent):
                 game_data.append({
                     'name': player_name,
                     'role': role,
-                    'data': ml_features,
-                    'features': features  # 保留原始特征用于分析
+                    'data': data,  # 原始数据字典
+                    'features': features  # numpy特征数组
                 })
                 
                 logger.debug(f"收集玩家数据: {player_name} (角色: {role})")

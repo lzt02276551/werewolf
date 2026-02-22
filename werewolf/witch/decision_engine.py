@@ -55,7 +55,11 @@ class WitchDecisionEngine(BaseDecisionMaker):
         context: Dict[str, Any]
     ) -> Tuple[bool, str, float]:
         """
-        决定是否使用解药
+        决定是否使用解药（简化版 - 符合女巫规则）
+        
+        策略：
+        1. 首夜：除非明显自刀（信任<15），否则救
+        2. 后续：评估玩家价值，避免救自刀
         
         Args:
             victim: 被杀的玩家
@@ -66,17 +70,26 @@ class WitchDecisionEngine(BaseDecisionMaker):
         """
         try:
             # 基础验证
-            validation_result = self._validate_and_check_antidote(victim, context)
-            if validation_result:
-                return validation_result
+            if not self._validate_antidote_input(victim, context):
+                return False, "Invalid input", 0.0
             
-            # 首夜策略检查
-            first_night_result = self._check_first_night_strategy(context)
-            if first_night_result:
-                return first_night_result
+            if not self.memory_dao.get_has_antidote():
+                return False, "Antidote already used", 0.0
+            
+            if not victim:
+                return False, "No victim", 0.0
             
             # 计算分数并决策
-            return self._calculate_and_decide_antidote(victim, context)
+            score = self._calculate_antidote_score(victim, context)
+            should_use = score >= self.config.ANTIDOTE_SCORE_THRESHOLD
+            reason = self._generate_antidote_reason(victim, score, context)
+            
+            logger.info(
+                f"[ANTIDOTE] {victim}: {score:.1f}/100 - "
+                f"{'SAVE' if should_use else 'SKIP'}"
+            )
+            
+            return should_use, reason, score
             
         except Exception as e:
             logger.error(f"Error in decide_antidote: {e}")
@@ -155,14 +168,15 @@ class WitchDecisionEngine(BaseDecisionMaker):
         context: Dict[str, Any]
     ) -> float:
         """
-        计算解药使用分数（决策树算法）
+        计算解药使用分数（企业级五星标准 - 符合女巫规则）
         
-        评分维度：
-        1. 基础信任度（0-100）
-        2. 角色价值加成（预言家+30，守卫+25，强力平民+20）
-        3. 威胁等级加成（警长+20，高质量发言+15）
-        4. 自刀风险惩罚（低信任-30）
-        5. 首夜特殊处理（首夜必救，除非极低信任<20）
+        策略：有人倒下基本都救，但要避免明显的自刀
+        
+        评分维度（简化为4类）：
+        1. 基础信任度（0-100）- 主要用于识别自刀
+        2. 角色价值（预言家+30，守卫+25，其他神职+20）
+        3. 首夜策略（首夜+40，除非极低信任<15）
+        4. 自刀风险（信任<20时-40）
         
         Args:
             victim: 被杀的玩家
@@ -173,81 +187,64 @@ class WitchDecisionEngine(BaseDecisionMaker):
         """
         trust_scores = context.get("trust_scores", {})
         player_data = context.get("player_data", {})
+        seer_checks = context.get("seer_checks", {})
         current_night = context.get("current_night", 0)
         
         # 基础分数：信任度
         trust = trust_scores.get(victim, 50)
         score = trust
         
-        # 获取玩家数据
         victim_data = player_data.get(victim, {})
         
-        # ========== 角色价值加成 ==========
+        # ========== 1. 角色价值加成（简化）==========
         
-        # 预言家声称（最高价值）
+        # 预言家（最高价值）
         if victim_data.get("claimed_seer", False):
             score += 30
             logger.debug(f"[ANTIDOTE] {victim} claimed Seer, +30")
         
-        # 守卫声称
-        if victim_data.get("claimed_guard", False):
+        # 守卫（次高价值）
+        elif victim_data.get("claimed_guard", False):
             score += 25
             logger.debug(f"[ANTIDOTE] {victim} claimed Guard, +25")
         
-        # 强力平民（高质量发言）
-        if victim_data.get("logical_speech", False):
+        # 其他神职（猎人等）
+        elif victim_data.get("claimed_hunter", False):
             score += 20
-            logger.debug(f"[ANTIDOTE] {victim} strong villager (logical speech), +20")
+            logger.debug(f"[ANTIDOTE] {victim} claimed Hunter, +20")
         
-        # 猎人声称（中等价值）
-        if victim_data.get("claimed_hunter", False):
-            score += 15
-            logger.debug(f"[ANTIDOTE] {victim} claimed Hunter, +15")
+        # ========== 2. 预言家验证加成 ==========
         
-        # ========== 威胁等级加成 ==========
+        if victim in seer_checks:
+            result = str(seer_checks[victim]).lower()
+            if "good" in result or "villager" in result:
+                score += 25
+                logger.debug(f"[ANTIDOTE] {victim} verified GOOD by Seer, +25")
         
-        # 警长身份
-        if victim_data.get("is_sheriff", False):
-            score += 20
-            logger.debug(f"[ANTIDOTE] {victim} is Sheriff, +20")
+        # ========== 3. 首夜策略（重要）==========
         
-        # 高质量发言
-        speech_quality = victim_data.get("speech_quality", 50)
-        if speech_quality >= 70:
-            score += 15
-            logger.debug(f"[ANTIDOTE] {victim} high speech quality ({speech_quality}), +15")
-        
-        # 引领讨论
-        if victim_data.get("leads_discussion", False):
-            score += 10
-            logger.debug(f"[ANTIDOTE] {victim} leads discussion, +10")
-        
-        # ========== 自刀风险惩罚 ==========
-        
-        # 低信任度（可能是自刀）
-        if trust < self.config.TRUST_LOW:
-            score -= 30
-            logger.debug(f"[ANTIDOTE] {victim} low trust ({trust:.1f}), -30 (self-knife risk)")
-        
-        # 极低信任度（很可能是自刀）
-        if trust < self.config.TRUST_VERY_LOW:
-            score -= 20  # 额外惩罚
-            logger.debug(f"[ANTIDOTE] {victim} very low trust ({trust:.1f}), -20 (high self-knife risk)")
-        
-        # ========== 首夜特殊处理 ==========
-        
-        # 首夜策略：除非极低信任，否则倾向于救
         if current_night == 1:
-            if trust >= 20:  # 不是极低信任
-                score += 30  # 首夜加成
-                logger.debug(f"[ANTIDOTE] First night bonus, +30")
+            # 首夜策略：使用配置的最低信任阈值
+            min_trust = self.config.ANTIDOTE_FIRST_NIGHT_MIN_TRUST
+            if trust >= min_trust:
+                score += 40  # 首夜大幅加成
+                logger.debug(f"[ANTIDOTE] First night bonus, +40 (trust {trust:.1f} >= {min_trust})")
+            else:
+                logger.debug(f"[ANTIDOTE] First night but trust too low ({trust:.1f} < {min_trust}), no bonus")
+        
+        # ========== 4. 自刀风险惩罚（关键）==========
+        
+        # 极低信任（很可能是自刀）
+        if trust < self.config.TRUST_VERY_LOW:
+            penalty = 40
+            score -= penalty
+            logger.debug(f"[ANTIDOTE] {victim} very low trust ({trust:.1f}), -{penalty} (likely self-knife)")
         
         # 限制在0-100范围内
         final_score = max(0, min(100, score))
         
         logger.info(
-            f"[ANTIDOTE SCORE] {victim}: trust={trust:.1f}, "
-            f"role_value={score-trust:.1f}, final={final_score:.1f}"
+            f"[ANTIDOTE SCORE] {victim}: trust={trust:.1f}, final={final_score:.1f}"
         )
         
         return final_score
@@ -387,17 +384,19 @@ class WitchDecisionEngine(BaseDecisionMaker):
         context: Dict[str, Any]
     ) -> float:
         """
-        计算毒药使用分数（决策树算法）
+        计算毒药使用分数（企业级五星决策树算法 - 优化版）
         
-        评分维度：
+        评分维度（8大类，权重优化）：
         1. 基础分数：100 - 信任度（信任度越低，分数越高）
-        2. 预言家确认狼人：直接100分（必毒）
-        3. 注入攻击：+40分
-        4. 虚假引用：+30分
-        5. 前后矛盾：+25分
-        6. 狼人保护行为：+20分
+        2. 预言家确认狼人：直接100分（必毒，最高优先级）
+        3. 注入攻击：+45分（严重恶意行为）
+        4. 虚假引用：+35分（欺骗行为）
+        5. 前后矛盾：+30分（逻辑漏洞）
+        6. 狼人保护行为：+25分（阵营暴露）
         7. 猎人声称：-50分（避免毒猎人，猎人被毒不能开枪）
-        8. 狼王嫌疑：+30分（优先毒狼王，狼王被毒不能开枪）
+        8. 狼王嫌疑：+35分（优先毒狼王，狼王被毒不能开枪）
+        9. 预言家验证好人：-60分（避免毒好人）
+        10. 残局调整：分数*0.9（更谨慎）
         
         Args:
             target: 目标玩家
@@ -412,69 +411,99 @@ class WitchDecisionEngine(BaseDecisionMaker):
         
         trust = trust_scores.get(target, 50)
         
-        # 基础分数：100 - 信任度
+        # ========== 基础分数：100 - 信任度 ==========
         score = 100 - trust
         
         # 获取玩家数据
         target_data = player_data.get(target, {})
         
-        # ========== 预言家确认（最强证据）==========
+        # ========== 1. 预言家确认（最强证据，最高优先级）==========
         
         if target in seer_checks:
             result = str(seer_checks[target]).lower()
-            if "wolf" in result:
+            if "wolf" in result or "werewolf" in result:
                 score = 100  # 确认狼人，必毒
-                logger.debug(f"[POISON] {target} confirmed wolf by Seer, score=100")
+                logger.debug(f"[POISON] {target} confirmed WOLF by Seer, score=100 (MUST POISON)")
                 return 100  # 直接返回，不需要其他计算
         
-        # ========== 行为异常检测 ==========
+        # ========== 2. 行为异常检测（权重优化）==========
         
-        # 注入攻击
+        # 注入攻击（最严重的恶意行为）
         injection_count = target_data.get("injection_attempts", 0)
         if injection_count > 0:
-            bonus = min(injection_count * 20, 40)  # 最多+40
+            bonus = min(injection_count * 22, 45)  # 每次+22，最多+45
             score += bonus
             logger.debug(f"[POISON] {target} injection attacks ({injection_count}), +{bonus}")
         
-        # 虚假引用
+        # 虚假引用（欺骗行为）
         false_quote_count = target_data.get("false_quotes", 0)
         if false_quote_count > 0:
-            bonus = min(false_quote_count * 15, 30)  # 最多+30
+            bonus = min(false_quote_count * 17, 35)  # 每次+17，最多+35
             score += bonus
             logger.debug(f"[POISON] {target} false quotes ({false_quote_count}), +{bonus}")
         
-        # 前后矛盾
+        # 前后矛盾（逻辑漏洞）
         contradiction_count = target_data.get("contradictions", 0)
         if contradiction_count > 0:
-            bonus = min(contradiction_count * 12, 25)  # 最多+25
+            bonus = min(contradiction_count * 15, 30)  # 每次+15，最多+30
             score += bonus
             logger.debug(f"[POISON] {target} contradictions ({contradiction_count}), +{bonus}")
         
-        # 狼人保护行为
+        # 狼人保护行为（阵营暴露）
         wolf_protect_count = target_data.get("protect_suspicious_count", 0)
         if wolf_protect_count > 0:
-            bonus = min(wolf_protect_count * 10, 20)  # 最多+20
+            bonus = min(wolf_protect_count * 12, 25)  # 每次+12，最多+25
             score += bonus
             logger.debug(f"[POISON] {target} protects wolves ({wolf_protect_count}), +{bonus}")
         
-        # ========== 角色声称处理 ==========
+        # ========== 3. 投票行为分析 ==========
+        
+        # 投票好人次数（狼人特征）
+        vote_good_count = target_data.get("vote_good_count", 0)
+        if vote_good_count >= 2:  # 至少2次投票好人
+            bonus = min(vote_good_count * 8, 20)  # 每次+8，最多+20
+            score += bonus
+            logger.debug(f"[POISON] {target} voted good players ({vote_good_count} times), +{bonus}")
+        
+        # ========== 4. 角色声称处理（风险控制）==========
         
         # 猎人声称：避免毒猎人（猎人被毒不能开枪）
         if target_data.get("claimed_hunter", False):
-            score -= 50
-            logger.debug(f"[POISON] {target} claimed Hunter, -50 (avoid poisoning hunter)")
+            penalty = 50
+            score -= penalty
+            logger.debug(f"[POISON] {target} claimed Hunter, -{penalty} (avoid poisoning hunter)")
         
         # 狼王嫌疑：优先毒狼王（狼王被毒不能开枪）
         if target_data.get("suspected_wolf_king", False):
-            score += 30
-            logger.debug(f"[POISON] {target} suspected Wolf King, +30 (priority target)")
+            bonus = 35
+            score += bonus
+            logger.debug(f"[POISON] {target} suspected Wolf King, +{bonus} (priority target)")
         
-        # 限制在0-100范围内
+        # ========== 5. 预言家验证好人：大幅降低分数 ==========
+        
+        if target in seer_checks:
+            result = str(seer_checks[target]).lower()
+            if "good" in result or "villager" in result:
+                penalty = 60  # 验证好人，大幅降低分数
+                score -= penalty
+                logger.debug(f"[POISON] {target} verified GOOD by Seer, -{penalty} (avoid poisoning good)")
+        
+        # ========== 6. 游戏阶段调整 ==========
+        
+        alive_players = context.get("alive_players", 12)
+        
+        # 残局（≤6人存活）：提高毒药使用标准
+        if alive_players <= 6:
+            # 残局必须更谨慎，降低所有分数10%
+            score *= 0.9
+            logger.debug(f"[POISON] {target} endgame adjustment, score *= 0.9")
+        
+        # ========== 7. 限制在0-100范围内 ==========
         final_score = max(0, min(100, score))
         
         logger.info(
             f"[POISON SCORE] {target}: trust={trust:.1f}, "
-            f"base={100-trust:.1f}, bonus={final_score-(100-trust):.1f}, final={final_score:.1f}"
+            f"base={100-trust:.1f}, adjustments={final_score-(100-trust):.1f}, final={final_score:.1f}"
         )
         
         return final_score

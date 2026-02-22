@@ -119,14 +119,24 @@ class TrustScoreManager:
         5. 历史记录追踪
         
         Args:
-            player: 玩家名称
+            player: 玩家名称，不能为空
             delta: 信任分数变化量（正数=增加，负数=减少）
-            reason: 变化原因
-            confidence: 证据置信度（0.0-1.0）
-            source_reliability: 来源可靠性（0.0-1.0）
+            reason: 变化原因，用于日志记录
+            confidence: 证据置信度（0.0-1.0），默认1.0表示完全可信
+            source_reliability: 来源可靠性（0.0-1.0），默认1.0表示完全可靠
+        
+        Raises:
+            ValueError: 当player为空或类型错误时
+            TypeError: 当delta不是数字类型时
         
         验证需求：AC-1.3.1
         """
+        # 输入验证（企业级标准）
+        if not player or not isinstance(player, str):
+            raise ValueError(f"Invalid player: {player}, must be non-empty string")
+        
+        if not isinstance(delta, (int, float)):
+            raise TypeError(f"Invalid delta type: {type(delta)}, must be int or float")
         # 导入优化的信任分数更新算法
         from werewolf.optimization.algorithms.trust_score import update_trust_score
         
