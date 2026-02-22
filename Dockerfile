@@ -19,8 +19,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # 仅复制运行必需的文件
 COPY werewolf/ ./werewolf/
-COPY config.py utils.py ./
-COPY start.sh test_minimal.py ./
+COPY config.py utils.py golden_path_integration.py ./
+COPY start.sh ./
 COPY README.md ./
 
 # 创建必要的目录

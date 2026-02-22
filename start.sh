@@ -15,17 +15,6 @@ echo "Python版本: $(python --version)"
 echo "工作目录: $(pwd)"
 echo "=========================================="
 
-# 运行诊断脚本（如果存在）
-if [ -f "test_minimal.py" ]; then
-    echo ""
-    echo "运行启动前诊断..."
-    python test_minimal.py || {
-        echo ""
-        echo "⚠ 诊断发现问题，但仍尝试启动应用..."
-        echo ""
-    }
-fi
-
 # 检查必需的环境变量
 echo ""
 echo "检查环境变量..."
